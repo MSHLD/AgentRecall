@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import type { IndexStatus } from "../../core/indexer";
 import { formatMessageTime, formatRelativeTime } from "../../core/format-session";
-import type { SearchOptions, SessionMessage, SessionSearchResult, SessionSource } from "../../core/types";
+import type { SearchOptions, SessionMessage, SessionSearchResult, SessionSortBy, SessionSource } from "../../core/types";
 
 const SOURCE_LABEL: Record<SessionSource, string> = {
   "claude-cli": "Claude Code",
@@ -38,6 +38,12 @@ const SOURCE_FILTERS: Array<{ label: string; value: SearchOptions["source"] }> =
   { label: "Claude App", value: "claude-app" },
   { label: "Codex CLI", value: "codex-cli" },
   { label: "Codex App", value: "codex-app" },
+];
+
+const SORT_OPTIONS: Array<{ label: string; value: SessionSortBy }> = [
+  { label: "Latest activity", value: "activity" },
+  { label: "Created", value: "created" },
+  { label: "Updated", value: "updated" },
 ];
 
 type ViewMode = "default" | "pinned" | "hidden";
@@ -68,6 +74,7 @@ export function App(): ReactElement {
   const [source, setSource] = useState<SearchOptions["source"]>("all");
   const [tag, setTag] = useState<string | undefined>();
   const [visibility, setVisibility] = useState<ViewMode>("default");
+  const [sortBy, setSortBy] = useState<SessionSortBy>("activity");
   const [results, setResults] = useState<SessionSearchResult[]>([]);
   const [tags, setTags] = useState<string[]>([]);
   const [status, setStatus] = useState<IndexStatus | null>(null);
@@ -87,6 +94,7 @@ export function App(): ReactElement {
       source,
       tag,
       visibility,
+      sortBy,
       limit: 300,
     };
     const [nextResults, nextTags, nextStatus] = await Promise.all([
@@ -98,7 +106,7 @@ export function App(): ReactElement {
     setTags(nextTags);
     setStatus(nextStatus);
     if (selectedKey && !nextResults.some((session) => session.sessionKey === selectedKey)) setSelectedKey(null);
-  }, [query, source, tag, visibility, selectedKey]);
+  }, [query, source, tag, visibility, sortBy, selectedKey]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 120);
@@ -307,6 +315,16 @@ export function App(): ReactElement {
               #{tag} ×
             </button>
           ) : null}
+          <label className="sort-menu">
+            <span>Sort</span>
+            <select value={sortBy} onChange={(event) => setSortBy(event.target.value as SessionSortBy)}>
+              {SORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
         </header>
 
         <div className="result-count">

@@ -90,6 +90,33 @@ describe("SessionStore", () => {
     expect(store.searchSessions({ query: "" }).map((session) => session.sessionKey)).toEqual(["codex:active", "codex:idle"]);
   });
 
+  it("sorts by explicit created and updated time modes", () => {
+    const store = createInMemoryStore();
+    const oldButUpdated = sampleSession({
+      sessionKey: "codex:updated",
+      rawId: "updated",
+      timestamp: new Date("2026-05-01T10:00:00Z").getTime(),
+      fileMtimeMs: new Date("2026-06-01T12:00:00Z").getTime(),
+    });
+    const newButIdle = sampleSession({
+      sessionKey: "codex:created",
+      rawId: "created",
+      timestamp: new Date("2026-06-01T10:00:00Z").getTime(),
+      fileMtimeMs: new Date("2026-06-01T10:00:00Z").getTime(),
+    });
+    store.upsertIndexedSession(oldButUpdated, messages);
+    store.upsertIndexedSession(newButIdle, messages);
+
+    expect(store.searchSessions({ query: "", sortBy: "created" }).map((session) => session.sessionKey)).toEqual([
+      "codex:created",
+      "codex:updated",
+    ]);
+    expect(store.searchSessions({ query: "", sortBy: "updated" }).map((session) => session.sessionKey)).toEqual([
+      "codex:updated",
+      "codex:created",
+    ]);
+  });
+
   it("deletes tags globally and removes unused tags after unlinking", () => {
     const store = createInMemoryStore();
     store.upsertIndexedSession(sampleSession(), messages);

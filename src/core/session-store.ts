@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import type { IndexedSession, SearchOptions, SessionMessage, SessionSearchResult, SessionSource } from "./types";
+import type { IndexedSession, SearchOptions, SessionMessage, SessionSearchResult, SessionSortBy, SessionSource } from "./types";
 
 type Db = Database.Database;
 
@@ -187,7 +187,7 @@ export class SessionStore {
     }
 
     return [...merged.values()]
-      .sort((a, b) => this.score(b, query) - this.score(a, query) || this.defaultSortValue(b) - this.defaultSortValue(a))
+      .sort((a, b) => this.score(b, query) - this.score(a, query) || this.sortValue(b, options.sortBy) - this.sortValue(a, options.sortBy))
       .slice(0, limit);
   }
 
@@ -418,7 +418,9 @@ export class SessionStore {
     return score;
   }
 
-  private defaultSortValue(result: SessionSearchResult): number {
+  private sortValue(result: SessionSearchResult, sortBy: SessionSortBy = "activity"): number {
+    if (sortBy === "created") return result.timestamp || 0;
+    if (sortBy === "updated") return result.fileMtimeMs || result.timestamp || 0;
     return Math.max(result.lastResumedAt || 0, result.fileMtimeMs || 0, result.timestamp || 0);
   }
 }

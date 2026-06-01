@@ -16,7 +16,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -239,6 +240,29 @@ button:disabled {
   outline: 0;
   background: transparent;
   color: #202421;
+}
+
+.sort-menu {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  height: 42px;
+  padding: 0 10px;
+  border: 1px solid #c9cec7;
+  border-radius: 8px;
+  background: #fff;
+  color: #626a63;
+  font-size: 12px;
+}
+
+.sort-menu select {
+  min-width: 134px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #202421;
+  cursor: pointer;
 }
 
 .result-count {
