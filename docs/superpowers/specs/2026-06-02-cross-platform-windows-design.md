@@ -1,149 +1,96 @@
-# Cross-Platform (macOS + Windows) Support — Design
+# 多端兼容(macOS + Windows)设计文档
 
-Date: 2026-06-02
-Status: Approved (pending spec review)
-Branch: `feat/cross-platform-windows`
+日期:2026-06-02
+状态:已确认(待 spec 复核)
+分支:`feat/cross-platform-windows`
 
-## Goal
+## 目标
 
-Make Agent-Session-Search fully usable on both macOS and Windows, including
-one-click "Resume in terminal". The search/index/UI engine is already
-cross-platform; this work adds the missing Windows implementations of the
-OS-integration points and consolidates all platform-specific logic behind a
-single boundary so future features rarely need per-OS work.
+让 Agent-Session-Search 在 macOS 和 Windows 上都完整可用,包括一键「在终端中恢复」。搜索 / 索引 / UI 引擎本就是跨平台的;本次工作补齐 Windows 上缺失的 OS 集成实现,并把所有平台相关逻辑收敛到单一边界,使未来新增功能很少需要按平台分别改动。
 
-Out of scope (YAGNI):
+范围之外(YAGNI):
 
-- Windows installer / `electron-builder` packaging.
-- Live-terminal focus on Windows (`session-activity.ts` stays stubbed).
-- Full Linux parity (Linux only needs to not crash; best-effort fallback).
-- Windows `%APPDATA%\Claude` Desktop-app session source (optional source;
-  degrades gracefully by absence today).
+- Windows 安装包 / `electron-builder` 打包。
+- Windows 上的实时终端聚焦(`session-activity.ts` 保持存根)。
+- Linux 完整适配(Linux 只需不崩,走兜底)。
+- Windows 的 `%APPDATA%\Claude` 桌面端会话源(可选源;目前因文件不存在而优雅缺省)。
 
-## Guiding Principle: Single Platform Boundary
+## 指导原则:单一平台边界
 
-All OS integration funnels through **one module** (`src/core/platform.ts`).
-Inside that module, each OS-touching operation is a single function whose body
-branches on `darwin / win32 / linux`. Business code (`main/index.ts`,
-`App.tsx`, `indexer.ts`) calls only platform-neutral function names and must
-not contain `process.platform` checks for these operations.
+所有 OS 集成都只走**一个模块**(`src/core/platform.ts`)。模块内部,每个涉及 OS 的操作都是一个函数,函数体内按 `darwin / win32 / linux` 分支。业务代码(`main/index.ts`、`App.tsx`、`indexer.ts`)只调用平台无关的函数名,**不得**为这些操作写 `process.platform` 判断。
 
-Consequence for future features:
+对未来新功能的影响:
 
-- A feature that does not touch the OS needs **zero** Windows work.
-- A feature that touches one of the five OS-integration categories below is
-  changed in **exactly one function** in `platform.ts` (add/adjust a branch);
-  macOS and business code are untouched, and nothing is missed because the
-  entry point is unique.
+- 不碰 OS 的功能 → **零** Windows 工作。
+- 碰到下面五类 OS 集成点之一的功能 → 改动只发生在 `platform.ts` 里**那一个函数**(加 / 改一个分支);macOS 与业务代码不动,且因为入口唯一,不会遗漏。
 
-The five OS-integration categories:
+五类 OS 集成点:
 
-1. Launching external processes (terminals, native apps).
-2. OS-specific file paths (e.g. macOS `Library/Application Support`).
-3. Global-shortcut default values.
-4. Tray / menu / window chrome.
-5. Revealing a file in the OS file manager.
+1. 启动外部进程(终端、原生 App)。
+2. OS 特定路径(如 macOS 的 `Library/Application Support`)。
+3. 全局快捷键默认值。
+4. 托盘 / 菜单 / 窗口外壳。
+5. 在 OS 文件管理器中定位文件。
 
-This is consolidation, not a new abstraction layer: existing scattered
-`process.platform` checks (currently in `main/index.ts` in ~4 places and
-`App.tsx`) are pulled toward this boundary where they concern the five
-categories above. Window-chrome checks that are inherently tied to
-`BrowserWindow` construction may stay in `main/index.ts` but are documented as
-the only sanctioned exception.
+这是「收敛」而非「新增抽象层」:把现有散落的 `process.platform` 判断(目前在 `main/index.ts` 约 4 处、`App.tsx` 等)向这个边界归拢——仅限上述五类。与 `BrowserWindow` 构造强绑定的窗口外壳判断可以留在 `main/index.ts`,但作为唯一被允许的例外加以说明。
 
-## Component Changes
+## 组件改动
 
-### 1. Terminal resume — `src/core/platform.ts` (primary)
+### 1. 终端恢复 —— `src/core/platform.ts`(主)
 
-Platform-aware **command construction**, extracted so the quoting/chaining
-rules live in one place:
+平台化的**命令构造**,把引号 / 拼接规则抽到一处:
 
-- macOS / Linux: unchanged — POSIX form `cd '<path>' && <bin> --resume <id>`
-  (existing `shellQuote`).
-- Windows: Windows quoting (double quotes); the working directory is passed to
-  the terminal via its own start-directory flag rather than being concatenated
-  into the command, to avoid cross-shell `cd` chaining differences.
+- macOS / Linux:不变 —— POSIX 形式 `cd '<path>' && <bin> --resume <id>`(沿用现有 `shellQuote`)。
+- Windows:用 Windows 引号(双引号);工作目录通过终端自身的「起始目录」参数传入,而不是把 `cd` 拼进命令,以避免跨 shell 的 `cd` 拼接差异。
 
-Add a `process.platform === "win32"` branch to `openResumeInTerminal` that
-launches the selected Windows terminal with the resume command:
+给 `openResumeInTerminal` 增加 `process.platform === "win32"` 分支,用所选 Windows 终端启动恢复命令:
 
-- **Windows Terminal**: `wt.exe -d "<projectPath>" <shell> -NoExit -Command "<resume>"`
-  (uses `-d` for the start directory).
-- **PowerShell**: prefer `pwsh.exe`, fall back to `powershell.exe`;
-  `<pwsh> -NoExit -Command "<resume>"`, launched with `cwd` set to the project
-  path.
-- **cmd**: `cmd.exe /K "<resume>"`, launched with `cwd` set to the project path.
+- **Windows Terminal**:`wt.exe -d "<projectPath>" <shell> -NoExit -Command "<resume>"`(用 `-d` 指定起始目录)。
+- **PowerShell**:优先 `pwsh.exe`,回退 `powershell.exe`;`<pwsh> -NoExit -Command "<resume>"`,以项目目录作为 `cwd` 启动。
+- **cmd**:`cmd.exe /K "<resume>"`,以项目目录作为 `cwd` 启动。
 
-Launcher availability probe order when the chosen terminal is unavailable:
-`wt → pwsh → powershell → cmd`, with a surfaced error if none succeed.
+所选终端不可用时的探测顺序:`wt → pwsh → powershell → cmd`,全部失败则抛出可见错误。
 
-The resume command itself (binary + `--resume <id>` + skip-permission flags) is
-identical across platforms; only the wrapping shell invocation and the
-directory handling differ.
+恢复命令本身(二进制 + `--resume <id>` + 跳过权限的标志)各平台一致;仅外层 shell 调用方式和目录处理不同。
 
-### 2. Platform-aware terminal settings — `src/core/platform.ts` + `src/renderer/src/App.tsx`
+### 2. 平台感知的终端设置 —— `src/core/platform.ts` + `src/renderer/src/App.tsx`
 
-- Extend `AppSettings["defaultTerminal"]` union with
-  `"WindowsTerminal" | "PowerShell" | "Cmd"`.
-- `DEFAULT_TERMINAL_OPTIONS` in `App.tsx` is filtered by the renderer's
-  platform: macOS users see the five macOS terminals; Windows users see the
-  three Windows terminals.
-- New `normalizeTerminal(setting, platform)`: if the stored value does not
-  belong to the current platform (e.g. a config copied between machines), fall
-  back to that platform's default (`Terminal` on macOS, `WindowsTerminal` on
-  Windows). The renderer needs to know the platform; expose it via the existing
-  preload bridge (e.g. `window.sessionSearch.platform` or a small `getPlatform`
-  IPC) rather than sniffing the user agent.
+- `AppSettings["defaultTerminal"]` 联合类型新增 `"WindowsTerminal" | "PowerShell" | "Cmd"`。
+- `App.tsx` 里的 `DEFAULT_TERMINAL_OPTIONS` 按渲染端平台过滤:macOS 用户看到五个 macOS 终端;Windows 用户看到三个 Windows 终端。
+- 新增 `normalizeTerminal(setting, platform)`:若存储值不属于当前平台(例如配置在机器间拷贝),回退到该平台默认值(macOS 为 `Terminal`,Windows 为 `WindowsTerminal`)。渲染端需要知道平台:通过现有 preload 桥接暴露(如 `window.sessionSearch.platform` 或一个小的 `getPlatform` IPC),而非嗅探 user agent。
 
-### 3. Per-platform global shortcut — `src/core/shortcuts.ts`
+### 3. 按平台的全局快捷键 —— `src/core/shortcuts.ts`
 
-- `DEFAULT_GLOBAL_SHORTCUT` becomes platform-derived: `Alt+Space`
-  (= Option+Space) on macOS; `Ctrl+Alt+Space` on Windows, because `Alt+Space`
-  is reserved by the Windows system menu and registration fails.
-- Option labels are platform-aware: show "Option" on macOS, "Alt" on Windows.
-- Existing registration-failure messaging is preserved.
+- `DEFAULT_GLOBAL_SHORTCUT` 改为按平台推导:macOS 为 `Alt+Space`(即 Option+Space);Windows 为 `Ctrl+Alt+Space`,因为 `Alt+Space` 被 Windows 系统菜单占用,注册会失败。
+- 选项 label 按平台显示:macOS 显示「Option」,Windows 显示「Alt」。
+- 保留现有的注册失败提示逻辑。
 
-### 4. Polish / lower priority
+### 4. 收尾 / 低优先级
 
-- **Tray icon** (`main/index.ts`): `setTemplateImage(true)` only affects macOS;
-  Windows keeps the existing inline SVG (renders acceptably). No `.ico` for now.
-- **Claude Desktop sessions**: Windows `%APPDATA%\Claude` not added; CLI
-  `~/.claude` and `~/.codex` already resolve on Windows via `os.homedir()`.
+- **托盘图标**(`main/index.ts`):`setTemplateImage(true)` 只对 macOS 有效;Windows 保留现有内联 SVG(显示可接受)。暂不引入 `.ico`。
+- **Claude 桌面端会话**:暂不加入 Windows 的 `%APPDATA%\Claude`;CLI 的 `~/.claude` 和 `~/.codex` 在 Windows 上已可通过 `os.homedir()` 解析。
 
-## Data Flow
+## 数据流
 
-Unchanged. Sessions are read from home dotfile directories (cross-platform),
-indexed into the SQLite store at `app.getPath("userData")` (cross-platform),
-and searched. Only the *resume* action and *settings defaults* differ by OS,
-both behind `platform.ts`.
+不变。会话从 home 点目录读取(跨平台),索引进 `app.getPath("userData")` 下的 SQLite 存储(跨平台),再搜索。只有**恢复**动作和**设置默认值**按 OS 不同,二者都在 `platform.ts` 之后。
 
-## Error Handling
+## 错误处理
 
-- Terminal launch failures throw with a clear, user-facing message
-  (consistent with the existing `runProcess` rejection that surfaces
-  stderr/stdout). On Windows, an unavailable selected terminal triggers the
-  probe-and-fallback chain before erroring.
-- Global-shortcut registration failure reuses the existing notification path.
+- 终端启动失败抛出清晰的、面向用户的错误信息(与现有 `runProcess` 把 stderr/stdout 透出的拒绝逻辑一致)。Windows 上所选终端不可用时,先走探测 + 回退链,再报错。
+- 全局快捷键注册失败复用现有通知路径。
 
-## Testing
+## 测试
 
-- `src/core/platform.test.ts`: add `win32` cases. Given
-  `process.platform = "win32"` (or an injected platform parameter) and each
-  terminal choice, assert the generated command string / argv is correct. These
-  are pure-function assertions; no real process is spawned, matching the
-  existing test style.
-- Add `normalizeTerminal` unit tests (cross-platform fallback).
-- Add `shortcuts` tests for the per-platform default.
-- `npm test` and `npm run typecheck` must pass.
+- `src/core/platform.test.ts`:增加 `win32` 用例。给定 `process.platform = "win32"`(或注入 platform 参数)与各终端选择,断言生成的命令字符串 / argv 正确。这些是纯函数断言,不真正起进程,与现有测试风格一致。
+- 为 `normalizeTerminal` 增加单测(跨平台回退)。
+- 为 `shortcuts` 增加按平台默认值的测试。
+- `npm test` 和 `npm run typecheck` 必须通过。
 
-## Files Touched
+## 涉及文件
 
-- `src/core/platform.ts` — primary (Windows resume, command construction,
-  `normalizeTerminal`, terminal-option metadata).
-- `src/core/shortcuts.ts` — per-platform default + labels.
-- `src/renderer/src/App.tsx` — platform-filtered terminal options.
-- `src/preload/index.ts` + `src/renderer/src/global.d.ts` — expose platform to
-  renderer (if not already available).
-- `src/main/index.ts` — small: consume per-platform shortcut default; minor
-  consolidation of OS-integration `process.platform` checks toward the boundary.
-- Tests: `platform.test.ts`, `shortcuts` tests.
+- `src/core/platform.ts` —— 主(Windows 恢复、命令构造、`normalizeTerminal`、终端选项元数据)。
+- `src/core/shortcuts.ts` —— 按平台默认值 + label。
+- `src/renderer/src/App.tsx` —— 按平台过滤终端选项。
+- `src/preload/index.ts` + `src/renderer/src/global.d.ts` —— 向渲染端暴露平台(若尚不可用)。
+- `src/main/index.ts` —— 小改:消费按平台的快捷键默认值;把 OS 集成的 `process.platform` 判断向边界做少量归拢。
+- 测试:`platform.test.ts`、`shortcuts` 测试。
