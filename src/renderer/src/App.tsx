@@ -188,6 +188,7 @@ export function App(): ReactElement {
   const [sortBy, setSortBy] = useState<SessionSortBy>("created");
   const [liveStatus, setLiveStatus] = useState<LiveStatusFilter>("all");
   const [sessionLimit, setSessionLimit] = useState(INITIAL_SESSION_LIMIT);
+  const [sessionTotalCount, setSessionTotalCount] = useState(0);
   const [hasMoreSessions, setHasMoreSessions] = useState(false);
   const [results, setResults] = useState<SessionSearchResult[]>([]);
   const [tags, setTags] = useState<string[]>([]);
@@ -230,6 +231,8 @@ export function App(): ReactElement {
     codebuddy: false,
   });
   const loadSeqRef = useRef(0);
+  const metadataLoadSeqRef = useRef(0);
+  const statsLoadSeqRef = useRef(0);
   const detailLoadSeqRef = useRef(0);
   const searchRef = useRef<HTMLInputElement>(null);
   const t = useCallback((en: string, zh: string) => localize(language, en, zh), [language]);
@@ -247,31 +250,41 @@ export function App(): ReactElement {
       projectPath,
       visibility,
       sortBy,
-      limit: sessionLimit + 1,
+      limit: sessionLimit,
     };
-    const [rawResults, nextTags, nextProjects, nextStats] = await Promise.all([
-      window.sessionSearch.searchSessions(options),
+    const page = await window.sessionSearch.searchSessionPage(options);
+    if (requestId !== loadSeqRef.current) return;
+    setResults(page.sessions);
+    setSessionTotalCount(page.totalCount);
+    setHasMoreSessions(page.hasMore);
+    setSelectedKey((current) =>
+      current && !page.sessions.some((session) => session.sessionKey === current) ? null : current,
+    );
+  }, [query, source, tag, projectPath, visibility, sortBy, sessionLimit]);
+
+  const loadSidebarMetadata = useCallback(async () => {
+    const requestId = ++metadataLoadSeqRef.current;
+    const [nextTags, nextProjects] = await Promise.all([
       window.sessionSearch.listTags(),
       window.sessionSearch.listProjects(),
-      window.sessionSearch.getStats({ period: statsPeriod }),
     ]);
-    if (requestId !== loadSeqRef.current) return;
-    const nextResults = rawResults.slice(0, sessionLimit);
-    setResults(nextResults);
-    setHasMoreSessions(rawResults.length > sessionLimit);
+    if (requestId !== metadataLoadSeqRef.current) return;
     setTags(nextTags);
     setProjects(nextProjects);
+  }, []);
+
+  const loadStats = useCallback(async () => {
+    const requestId = ++statsLoadSeqRef.current;
+    const nextStats = await window.sessionSearch.getStats({ period: statsPeriod });
+    if (requestId !== statsLoadSeqRef.current) return;
     setStats(nextStats);
-    setSelectedKey((current) =>
-      current && !nextResults.some((session) => session.sessionKey === current) ? null : current,
-    );
-  }, [query, source, tag, projectPath, visibility, sortBy, sessionLimit, statsPeriod]);
+  }, [statsPeriod]);
 
   const refreshStats = useCallback(async () => {
     setStatsRefreshing(true);
     setStatsFeedback({ kind: "running", message: t("Refreshing usage...", "正在刷新用量...") });
     try {
-      setStats(await window.sessionSearch.getStats({ period: statsPeriod }));
+      await loadStats();
       const successMessage = t("Usage refreshed.", "用量已刷新。");
       setStatsFeedback({ kind: "success", message: successMessage });
       window.setTimeout(() => {
@@ -282,7 +295,7 @@ export function App(): ReactElement {
     } finally {
       setStatsRefreshing(false);
     }
-  }, [statsPeriod, t]);
+  }, [loadStats, t]);
 
   const loadQuotas = useCallback(async (mode: "initial" | "manual" | "background" = "initial") => {
     const background = mode === "background";
@@ -373,6 +386,14 @@ export function App(): ReactElement {
   }, [load]);
 
   useEffect(() => {
+    void loadSidebarMetadata();
+  }, [loadSidebarMetadata]);
+
+  useEffect(() => {
+    void loadStats();
+  }, [loadStats]);
+
+  useEffect(() => {
     void loadQuotas();
     const timer = window.setInterval(() => void loadQuotas("background"), QUOTA_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(timer);
@@ -438,7 +459,11 @@ export function App(): ReactElement {
   useEffect(() => {
     const offIndex = window.sessionSearch.onIndexStatus((nextStatus) => {
       setIndexStatus(nextStatus);
-      if (!nextStatus.running) void load();
+      if (!nextStatus.running) {
+        void load();
+        void loadSidebarMetadata();
+        void loadStats();
+      }
     });
     const offFocus = window.sessionSearch.onFocusSearch(() => searchRef.current?.focus());
     const offOpenSettings = window.sessionSearch.onOpenSettings(() => {
@@ -451,7 +476,7 @@ export function App(): ReactElement {
       offFocus();
       offOpenSettings();
     };
-  }, [load]);
+  }, [load, loadSidebarMetadata, loadStats]);
 
   const liveSessionKeys = useMemo(
     () => new Set(liveSessions.sessions.map((session) => `${session.family}:${session.rawId}`)),
@@ -651,8 +676,12 @@ export function App(): ReactElement {
     }
   }
 
-  async function refreshAfterAction(): Promise<void> {
-    await load();
+  async function refreshAfterAction(options: { metadata?: boolean; stats?: boolean } = {}): Promise<void> {
+    await Promise.all([
+      load(),
+      options.metadata ? loadSidebarMetadata() : Promise.resolve(),
+      options.stats ? loadStats() : Promise.resolve(),
+    ]);
     if (detail) {
       const fresh = await window.sessionSearch.getSession(detail.sessionKey);
       if (fresh) setDetail(fresh);
@@ -671,6 +700,7 @@ export function App(): ReactElement {
 
   async function submitDialog(valueOverride?: string): Promise<void> {
     if (!dialog) return;
+    const dialogKind = dialog.kind;
     const value = (valueOverride ?? dialog.value).trim();
     if (dialog.kind === "rename") {
       await window.sessionSearch.setCustomTitle(dialog.session.sessionKey, value || null);
@@ -678,12 +708,12 @@ export function App(): ReactElement {
       await window.sessionSearch.addTag(dialog.session.sessionKey, value);
     }
     setDialog(null);
-    await refreshAfterAction();
+    await refreshAfterAction({ metadata: dialogKind === "tag" && Boolean(value) });
   }
 
   async function removeTag(session: SessionSearchResult, tagName: string): Promise<void> {
     await window.sessionSearch.removeTag(session.sessionKey, tagName);
-    await refreshAfterAction();
+    await refreshAfterAction({ metadata: true });
   }
 
   async function toggleFavorite(session: SessionSearchResult): Promise<void> {
@@ -696,6 +726,7 @@ export function App(): ReactElement {
     setDeleteTagName(null);
     if (tag === tagName) setTag(undefined);
     else await load();
+    await loadSidebarMetadata();
     if (detail) {
       const fresh = await window.sessionSearch.getSession(detail.sessionKey);
       if (fresh) setDetail(fresh);
@@ -718,7 +749,7 @@ export function App(): ReactElement {
       if (removed) {
         if (detail?.sessionKey === session.sessionKey) closeDetail();
         setSelectedKey((current) => (current === session.sessionKey ? null : current));
-        await load();
+        await Promise.all([load(), loadSidebarMetadata(), loadStats()]);
         const message = t("Session file deleted.", "会话文件已删除。");
         setActionStatus({ kind: "success", message });
         window.setTimeout(() => {
@@ -792,7 +823,7 @@ export function App(): ReactElement {
     try {
       const status = await window.sessionSearch.refreshIndex();
       setIndexStatus(status);
-      await load();
+      await Promise.all([load(), loadSidebarMetadata(), loadStats()]);
       if (status.error) {
         setRefreshFeedback({ kind: "error", message: status.error });
         return;
@@ -843,7 +874,7 @@ export function App(): ReactElement {
               codex: enablingCodex ? false : current.codex,
               codebuddy: enablingCodeBuddy ? false : current.codebuddy,
             }));
-            await load();
+            await Promise.all([load(), loadSidebarMetadata(), loadStats()]);
             setSettingsFeedback({ kind: "success", message: t("Sources ready.", "来源已就绪。") });
             window.setTimeout(() => {
               setSettingsFeedback((current) => (current?.kind === "success" ? null : current));
@@ -1161,13 +1192,7 @@ export function App(): ReactElement {
 
         <div className="result-count">
           <span>
-            {hasMoreSessions
-              ? displayedResults.length === results.length
-                ? t(`${results.length}+ sessions`, `${results.length}+ 个会话`)
-                : t(`${displayedResults.length} of ${results.length}+ sessions`, `${displayedResults.length} / ${results.length}+ 个会话`)
-              : displayedResults.length === results.length
-              ? t(`${results.length} sessions`, `${results.length} 个会话`)
-              : t(`${displayedResults.length} of ${results.length} sessions`, `${displayedResults.length} / ${results.length} 个会话`)}
+            {t(`${sessionTotalCount} sessions`, `${sessionTotalCount} 个会话`)}
           </span>
           {selected ? <span className="selected-path">{selected.projectPath || selected.rawId}</span> : null}
         </div>

@@ -12,6 +12,7 @@ import type {
   ProjectSummary,
   SearchOptions,
   SessionMessage,
+  SessionSearchPage,
   SessionSearchResult,
   SessionStats,
   SessionStatsOptions,
@@ -22,6 +23,7 @@ import type {
 const api = {
   platform: process.platform as NodeJS.Platform,
   searchSessions: (options: SearchOptions): Promise<SessionSearchResult[]> => ipcRenderer.invoke("search:sessions", options),
+  searchSessionPage: (options: SearchOptions): Promise<SessionSearchPage> => ipcRenderer.invoke("search:session-page", options),
   getSession: (sessionKey: string): Promise<SessionSearchResult | null> => ipcRenderer.invoke("session:get", sessionKey),
   getMessages: (sessionKey: string, offset?: number, limit?: number): Promise<SessionMessage[]> =>
     ipcRenderer.invoke("session:messages", sessionKey, offset, limit),

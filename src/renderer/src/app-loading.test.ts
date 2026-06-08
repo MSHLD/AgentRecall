@@ -1,0 +1,29 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+
+const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+
+function sourceBlock(startNeedle: string, endNeedles: string[]): string {
+  const start = appSource.indexOf(startNeedle);
+  expect(start).toBeGreaterThanOrEqual(0);
+  const ends = endNeedles.map((needle) => appSource.indexOf(needle, start + startNeedle.length)).filter((index) => index >= 0);
+  expect(ends.length).toBeGreaterThan(0);
+  return appSource.slice(start, Math.min(...ends));
+}
+
+describe("app loading performance", () => {
+  it("keeps session search isolated from sidebar metadata and stats refreshes", () => {
+    const loadSessionsBlock = sourceBlock("const load = useCallback(async () =>", [
+      "const loadSidebarMetadata = useCallback",
+      "const refreshStats = useCallback",
+    ]);
+
+    expect(loadSessionsBlock).toContain("window.sessionSearch.searchSessionPage(options)");
+    expect(loadSessionsBlock).toContain("setSessionTotalCount(page.totalCount)");
+    expect(appSource).toContain('t(`${sessionTotalCount} sessions`, `${sessionTotalCount} 个会话`)');
+    expect(appSource).not.toContain("displayedResults.length} /");
+    expect(loadSessionsBlock).not.toContain("window.sessionSearch.listTags()");
+    expect(loadSessionsBlock).not.toContain("window.sessionSearch.listProjects()");
+    expect(loadSessionsBlock).not.toContain("window.sessionSearch.getStats");
+  });
+});

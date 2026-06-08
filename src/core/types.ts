@@ -97,6 +97,12 @@ export interface SessionSearchResult extends IndexedSession {
   messageCount: number;
 }
 
+export interface SessionSearchPage {
+  sessions: SessionSearchResult[];
+  totalCount: number;
+  hasMore: boolean;
+}
+
 export interface SessionStatsSummary extends TokenUsage {
   sessionCount: number;
   messageCount: number;

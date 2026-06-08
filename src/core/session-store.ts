@@ -13,6 +13,7 @@ import type {
   ProjectSummary,
   SearchOptions,
   SessionMessage,
+  SessionSearchPage,
   SessionSearchResult,
   SessionStats,
   SessionStatsOptions,
@@ -521,10 +522,14 @@ export class SessionStore {
   }
 
   searchSessions(options: SearchOptions = {}): SessionSearchResult[] {
+    return this.searchSessionPage(options).sessions;
+  }
+
+  searchSessionPage(options: SearchOptions = {}): SessionSearchPage {
     const limit = options.limit ?? 200;
     const query = options.query?.trim() || "";
     const ftsMatches = query ? this.searchFts(query) : new Map<string, string | null>();
-    const rows = this.getCandidateRows(options);
+    const rows = this.getCandidateRows(options, query, limit);
     const tagsBySession = this.getTagsForSessions(rows.map((row) => row.session_key));
     const merged = new Map<string, SessionSearchResult>();
 
@@ -540,9 +545,16 @@ export class SessionStore {
       merged.set(hydrated.sessionKey, hydrated);
     }
 
-    return [...merged.values()]
-      .sort((a, b) => this.score(b, query) - this.score(a, query) || this.sortValue(b, options.sortBy) - this.sortValue(a, options.sortBy))
-      .slice(0, limit);
+    const sorted = [...merged.values()].sort(
+      (a, b) => this.score(b, query) - this.score(a, query) || this.sortValue(b, options.sortBy) - this.sortValue(a, options.sortBy),
+    );
+    const totalCount = query ? sorted.length : this.countCandidateRows(options);
+    const sessions = sorted.slice(0, limit);
+    return {
+      sessions,
+      totalCount,
+      hasMore: totalCount > sessions.length,
+    };
   }
 
   clearSearchIndex(): void {
@@ -978,7 +990,34 @@ export class SessionStore {
     }>;
   }
 
-  private getCandidateRows(options: SearchOptions): SessionRow[] {
+  private getCandidateRows(options: SearchOptions, query: string, limit: number): SessionRow[] {
+    const { where, args } = this.sessionWhereClause(options);
+
+    if (!query) {
+      args.push(limit);
+      return this.db
+        .prepare(
+          `
+          SELECT *
+          FROM sessions
+          WHERE ${where.join(" AND ")}
+          ORDER BY pinned DESC, ${sessionSortSql(options.sortBy)} DESC
+          LIMIT ?
+        `,
+        )
+        .all(...args) as unknown as SessionRow[];
+    }
+
+    return this.db.prepare(`SELECT * FROM sessions WHERE ${where.join(" AND ")}`).all(...args) as unknown as SessionRow[];
+  }
+
+  private countCandidateRows(options: SearchOptions): number {
+    const { where, args } = this.sessionWhereClause(options);
+    const row = this.db.prepare(`SELECT COUNT(*) AS count FROM sessions WHERE ${where.join(" AND ")}`).get(...args) as { count: number };
+    return row.count;
+  }
+
+  private sessionWhereClause(options: SearchOptions): { where: string[]; args: SQLInputValue[] } {
     const where: string[] = [];
     const args: SQLInputValue[] = [];
 
@@ -1018,7 +1057,7 @@ export class SessionStore {
       args.push(options.tag);
     }
 
-    return this.db.prepare(`SELECT * FROM sessions WHERE ${where.join(" AND ")}`).all(...args) as unknown as SessionRow[];
+    return { where, args };
   }
 
   private matchesTextFields(result: SessionSearchResult, query: string): boolean {
@@ -1268,6 +1307,12 @@ function buildFtsQuery(query: string): string {
     .filter(Boolean)
     .map((token) => `${token}*`)
     .join(" ");
+}
+
+function sessionSortSql(sortBy: SessionSortBy = "created"): string {
+  if (sortBy === "updated") return "CASE WHEN file_mtime_ms > 0 THEN file_mtime_ms ELSE timestamp END";
+  if (sortBy === "activity") return "MAX(COALESCE(last_resumed_at, 0), COALESCE(file_mtime_ms, 0), COALESCE(timestamp, 0))";
+  return "COALESCE(timestamp, 0)";
 }
 
 function branchTagName(branch: string | null | undefined): string | null {

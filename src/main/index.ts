@@ -518,6 +518,7 @@ function stopAutoIndexRefresh(): void {
 
 function registerIpc(): void {
   ipcMain.handle("search:sessions", (_event, options: SearchOptions) => store.searchSessions(options));
+  ipcMain.handle("search:session-page", (_event, options: SearchOptions) => store.searchSessionPage(options));
   ipcMain.handle("session:get", (_event, sessionKey: string) => {
     store.markOpened(sessionKey);
     return store.getSession(sessionKey);

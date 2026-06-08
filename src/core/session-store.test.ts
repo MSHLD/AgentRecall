@@ -622,6 +622,40 @@ describe("SessionStore", () => {
     ]);
   });
 
+  it("returns a limited search page with the total matching session count", () => {
+    const store = createInMemoryStore();
+    store.upsertIndexedSession(
+      sampleSession({
+        sessionKey: "codex:one",
+        rawId: "one",
+        timestamp: new Date("2026-06-01T10:00:00Z").getTime(),
+      }),
+      messages,
+    );
+    store.upsertIndexedSession(
+      sampleSession({
+        sessionKey: "codex:two",
+        rawId: "two",
+        timestamp: new Date("2026-06-02T10:00:00Z").getTime(),
+      }),
+      messages,
+    );
+    store.upsertIndexedSession(
+      sampleSession({
+        sessionKey: "codex:three",
+        rawId: "three",
+        timestamp: new Date("2026-06-03T10:00:00Z").getTime(),
+      }),
+      messages,
+    );
+
+    const page = store.searchSessionPage({ query: "", sortBy: "created", limit: 2 });
+
+    expect(page.sessions.map((session) => session.sessionKey)).toEqual(["codex:three", "codex:two"]);
+    expect(page.totalCount).toBe(3);
+    expect(page.hasMore).toBe(true);
+  });
+
   it("deletes tags globally and removes unused tags after unlinking", () => {
     const store = createInMemoryStore();
     store.upsertIndexedSession(sampleSession(), messages);
