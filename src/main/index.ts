@@ -890,6 +890,24 @@ let summaryBackfillRunning = false;
 const SUMMARY_PROVIDER_ERROR =
   "AI summary has no usable provider. Select Codex, Claude Code, or configure a direct summary API provider in Settings.";
 
+function buildCodexExecEndpoint(settings: AppSettings): SummaryEndpoint {
+  return {
+    baseUrl: "",
+    model: "codex",
+    apiKey: "",
+    apiFormat: "codex_exec",
+    command: settings.codexBinary,
+    cwd: process.cwd(),
+    onTemporarySession: (sessionKey) => {
+      try {
+        store.deleteSession(sessionKey);
+      } catch {
+        // Best-effort cleanup if an ephemeral Codex call is indexed before it exits.
+      }
+    },
+  };
+}
+
 async function resolveSummaryEndpointFromSettings(): Promise<SummaryEndpoint | null> {
   const settings = await getHydratedSettings();
   if (settings.summarySource === "custom") {
@@ -1104,10 +1122,10 @@ function registerIpc(): void {
     return { processed, failed, total };
   });
   ipcMain.handle("ai:assistant-chat", async (_event, messages: AiChatMessage[]) => {
-    const endpoint = await resolveSummaryEndpointFromSettings();
-    if (!endpoint) {
-      throw new Error("No AI provider is available. Select Codex, Claude Code, or configure a direct API provider in the API configuration.");
-    }
+    // The assistant shares the summary provider routing. When the user picked a
+    // direct API provider but left it incomplete, fall back to the local Codex
+    // CLI so the assistant still works out of the box.
+    const endpoint = (await resolveSummaryEndpointFromSettings()) ?? buildCodexExecEndpoint(await getHydratedSettings());
 
     // Local CLI providers (codex exec / claude) can't do HTTP function calling.
     // Fall back to: keyword-search the store with the user's words, then let the
