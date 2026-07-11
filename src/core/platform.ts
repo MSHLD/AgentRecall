@@ -48,11 +48,12 @@ interface ResumeOptions {
   withCwd?: boolean;
   skipPermissions?: boolean;
   platform?: NodeJS.Platform;
+  homeDir?: string;
   sshTarget?: string;
   sshArgs?: string[];
 }
 
-type ResumeOpenOptions = Pick<ResumeOptions, "skipPermissions" | "platform" | "sshTarget" | "sshArgs">;
+type ResumeOpenOptions = Pick<ResumeOptions, "skipPermissions" | "platform" | "homeDir" | "sshTarget" | "sshArgs">;
 
 export interface AppSettings {
   defaultTerminal: TerminalChoice;
@@ -277,37 +278,44 @@ function migrationCodexHome(homeDir: string, platform: NodeJS.Platform): string 
   return platformPath.join(homeDir, ".codex-internal");
 }
 
-function buildResumeProcessArgs(
+function migrationTargetForResumeSource(source: SessionSource): MigrationTarget | null {
+  if (source === "claude-cli" || source === "claude-app") return "claude";
+  if (source === "claude-internal") return "claude-internal";
+  if (source === "codex-cli" || source === "codex-app") return "codex";
+  if (source === "codex-internal") return "codex-internal";
+  if (source === "tclaude-cli") return "tclaude";
+  if (source === "tcodex-cli") return "tcodex";
+  if (source === "codebuddy-cli") return "codebuddy";
+  return null;
+}
+
+function buildResumeRuntimeProcessSpec(
   session: SessionSearchResult,
   settings: AppSettings,
   skipPermissions: boolean,
-): { command: string; args: string[] } {
-  const family = sourceFamily(session.source);
-  if (family === "claude") {
-    const args = ["--resume", session.rawId];
-    if (skipPermissions) args.push("--dangerously-skip-permissions");
-    return { command: settings.claudeBinary, args };
-  }
-  if (family === "tclaude") {
-    const args = ["--resume", session.rawId];
-    if (skipPermissions) args.push("--dangerously-skip-permissions");
-    return { command: settings.tclaudeBinary, args };
-  }
-  if (family === "codebuddy") {
-    return { command: settings.codeBuddyBinary, args: ["--resume", session.rawId] };
-  }
-  if (family === "tcodex") {
-    const args = ["resume", session.rawId];
-    if (skipPermissions) args.push("--dangerously-bypass-approvals-and-sandbox");
-    return { command: settings.tcodexBinary, args };
-  }
-  if (family !== "codex") {
+  platform: NodeJS.Platform,
+  homeDir: string,
+): Omit<ResumeProcessSpec, "displayCommand"> {
+  const target = migrationTargetForResumeSource(session.source);
+  if (!target) {
     throw new Error(`Resume is not supported for ${sourceDisplayName(session.source)} sessions yet.`);
   }
 
-  const args = ["resume", session.rawId];
-  if (skipPermissions) args.push("--dangerously-bypass-approvals-and-sandbox");
-  return { command: settings.codexBinary, args };
+  const args = migrationResumeArgs(target, session.rawId);
+  if (skipPermissions) {
+    if (target === "claude" || target === "tclaude" || target === "claude-internal") {
+      args.push("--dangerously-skip-permissions");
+    } else if (target === "codex" || target === "tcodex" || target === "codex-internal") {
+      args.push("--dangerously-bypass-approvals-and-sandbox");
+    }
+  }
+
+  return {
+    command: migrationBinary(target, settings),
+    args,
+    cwd: session.projectPath || undefined,
+    env: target === "codex-internal" ? { CODEX_HOME: migrationCodexHome(homeDir, platform) } : undefined,
+  };
 }
 
 // Which shell the displayed/copied command is meant to be pasted into. The
@@ -354,10 +362,10 @@ function buildShellCommand(
 function buildResumeShellCommand(
   session: SessionSearchResult,
   settings: AppSettings,
-  opts: Required<Pick<ResumeOptions, "withCwd" | "skipPermissions">> & { shell: ShellKind },
+  opts: Required<Pick<ResumeOptions, "withCwd" | "skipPermissions" | "platform">> & { shell: ShellKind; homeDir?: string },
 ): string {
-  const { command, args } = buildResumeProcessArgs(session, settings, opts.skipPermissions);
-  return buildShellCommand(command, args, session.projectPath, opts);
+  const spec = buildResumeRuntimeProcessSpec(session, settings, opts.skipPermissions, opts.platform, opts.homeDir ?? homedir());
+  return buildMigrationResumeShellCommand(spec, session.projectPath ?? "", opts.shell, opts.withCwd);
 }
 
 function buildMigrationResumeShellCommand(
@@ -438,17 +446,19 @@ export function getResumeCommand(
   settings: AppSettings = defaultSettings,
   opts: ResumeOptions = {},
 ): string {
-  const { withCwd = true, skipPermissions = false, platform = process.platform } = opts;
+  const { withCwd = true, skipPermissions = false, platform = process.platform, homeDir = homedir() } = opts;
   const sshArgs = resolveSshArgs(opts);
   const shell = localShellKind(platform, settings);
+  const runtimePlatform = sshArgs ? "linux" : platform;
+  const spec = buildResumeRuntimeProcessSpec(session, settings, skipPermissions, runtimePlatform, homeDir);
   if (sshArgs) {
     // The remote command body always targets a POSIX shell; only the outer ssh
     // invocation is quoted for the local terminal (cmd carets vs PowerShell).
-    const innerCommand = buildResumeShellCommand(session, settings, { withCwd, skipPermissions, shell: "posix" });
+    const innerCommand = buildMigrationResumeShellCommand(spec, session.projectPath ?? "", "posix", withCwd);
     if (shell === "powershell") return formatPowershellSshDisplay(sshArgs, innerCommand);
     return formatSshDisplayCommand(sshArgs, innerCommand, platform);
   }
-  return buildResumeShellCommand(session, settings, { withCwd, skipPermissions, shell });
+  return buildMigrationResumeShellCommand(spec, session.projectPath ?? "", shell, withCwd);
 }
 
 function formatPowershellSshDisplay(sshArgs: string[], innerCommand: string): string {
@@ -541,6 +551,7 @@ export function buildWindowsResumeLaunchPlan(
     withCwd: Boolean(sshArgs),
     skipPermissions: opts.skipPermissions,
     platform,
+    homeDir: opts.homeDir,
     sshTarget: opts.sshTarget,
     sshArgs: opts.sshArgs,
   });
@@ -550,6 +561,7 @@ export function buildWindowsResumeLaunchPlan(
         withCwd: true,
         skipPermissions: opts.skipPermissions,
         platform,
+        homeDir: opts.homeDir,
       });
   const terminal = normalizeTerminal(opts.terminal ?? settings.defaultTerminal, "win32");
   const cwd = sshArgs ? "" : existingDirectory(session.projectPath);
@@ -602,18 +614,15 @@ function spawnDetached(command: string, args: string[], cwd?: string): Promise<v
 export function getResumeProcessSpec(
   session: SessionSearchResult,
   settings: AppSettings = defaultSettings,
-  opts: { skipPermissions?: boolean; platform?: NodeJS.Platform; sshTarget?: string; sshArgs?: string[] } = {},
+  opts: Pick<ResumeOptions, "skipPermissions" | "platform" | "homeDir" | "sshTarget" | "sshArgs"> = {},
 ): ResumeProcessSpec {
-  const { skipPermissions = false, platform = process.platform } = opts;
-  const { command, args } = buildResumeProcessArgs(session, settings, skipPermissions);
+  const { skipPermissions = false, platform = process.platform, homeDir = homedir() } = opts;
   const sshArgs = resolveSshArgs(opts);
+  const runtimePlatform = sshArgs ? "linux" : platform;
+  const spec = buildResumeRuntimeProcessSpec(session, settings, skipPermissions, runtimePlatform, homeDir);
 
   if (sshArgs) {
-    const innerCommand = buildResumeShellCommand(session, settings, {
-      withCwd: true,
-      skipPermissions,
-      shell: "posix",
-    });
+    const innerCommand = buildMigrationResumeShellCommand(spec, session.projectPath ?? "", "posix", true);
     return {
       command: "ssh",
       args: [...sshArgs, innerCommand],
@@ -629,10 +638,8 @@ export function getResumeProcessSpec(
   }
 
   return {
-    command,
-    args,
-    cwd: session.projectPath || undefined,
-    displayCommand: getResumeCommand(session, settings, { withCwd: true, skipPermissions, platform }),
+    ...spec,
+    displayCommand: getResumeCommand(session, settings, { withCwd: true, skipPermissions, platform, homeDir }),
   };
 }
 
@@ -1041,6 +1048,8 @@ function getResumePowerShellCommand(
     withCwd: true,
     skipPermissions: opts.skipPermissions ?? false,
     shell: "posix",
+    platform: "linux",
+    homeDir: opts.homeDir,
   });
   return formatPowershellSshDisplay(opts.sshArgs, innerCommand);
 }

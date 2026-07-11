@@ -193,7 +193,7 @@ describe("resume commands", () => {
     );
   });
 
-  it("keeps local Windows Cmd quoting unchanged for cmd metacharacters", () => {
+  it("encodes local Windows Cmd resume values containing environment syntax", () => {
     const session = {
       source: "claude-cli",
       rawId: "abc",
@@ -201,8 +201,10 @@ describe("resume commands", () => {
     } as SessionSearchResult;
     const settings = { ...defaultSettings, defaultTerminal: "Cmd" as const };
 
-    expect(getResumeCommand(session, settings, { platform: "win32" })).toBe(
-      'cd /d "C:\\repo %USERNAME% & tools" && claude --resume abc',
+    const command = getResumeCommand(session, settings, { platform: "win32" });
+    expect(command).toMatch(/^setlocal DisableDelayedExpansion & powershell\.exe -NoLogo -NoProfile -EncodedCommand [A-Za-z0-9+/=]+ & endlocal$/);
+    expect(decodeEncodedCmdPowerShell(command)).toBe(
+      "$ErrorActionPreference = 'Stop'; Set-Location -LiteralPath 'C:\\repo %USERNAME% & tools'; & claude --resume abc",
     );
   });
 
@@ -654,6 +656,91 @@ describe("reveal in file manager", () => {
 });
 
 describe("resume process specs", () => {
+  it("uses the concrete Claude Internal binary for ordinary resume", () => {
+    const session = {
+      source: "claude-internal",
+      rawId: "internal-claude-1",
+      projectPath: "/repo",
+    } as SessionSearchResult;
+    const settings = { ...defaultSettings, claudeInternalBinary: "/opt/Internal CLI/claude-internal" };
+
+    expect(getResumeProcessSpec(session, settings, { platform: "darwin" })).toMatchObject({
+      command: "/opt/Internal CLI/claude-internal",
+      args: ["--resume", "internal-claude-1"],
+      cwd: "/repo",
+      env: undefined,
+      displayCommand: "cd /repo && '/opt/Internal CLI/claude-internal' --resume internal-claude-1",
+    });
+  });
+
+  it("keeps ordinary Codex Internal resume in its scoped CODEX_HOME", () => {
+    const session = {
+      source: "codex-internal",
+      rawId: "internal-codex-1",
+      projectPath: "/repo with spaces",
+    } as SessionSearchResult;
+    const settings = { ...defaultSettings, codexBinary: "/opt/Codex CLI/codex" };
+    const options = { platform: "darwin" as const, homeDir: "/Users/internal user" };
+
+    expect(getResumeProcessSpec(session, settings, options)).toEqual({
+      command: "/opt/Codex CLI/codex",
+      args: ["resume", "internal-codex-1"],
+      cwd: "/repo with spaces",
+      env: { CODEX_HOME: "/Users/internal user/.codex-internal" },
+      displayCommand:
+        "cd '/repo with spaces' && CODEX_HOME='/Users/internal user/.codex-internal' '/opt/Codex CLI/codex' resume internal-codex-1",
+    });
+  });
+
+  it("scopes ordinary Codex Internal display commands in POSIX, PowerShell, and Cmd", () => {
+    const session = {
+      source: "codex-internal",
+      rawId: "internal id",
+      projectPath: "C:\\repo & tools",
+    } as SessionSearchResult;
+    const homeDir = "C:\\Users\\Internal User";
+    const options = { platform: "win32" as const, homeDir };
+    const powershell = getResumeCommand(session, { ...defaultSettings, defaultTerminal: "PowerShell" }, options);
+    const cmd = getResumeCommand(session, { ...defaultSettings, defaultTerminal: "Cmd" }, options);
+    const posix = getResumeCommand(
+      { ...session, projectPath: "/repo with spaces" },
+      defaultSettings,
+      { platform: "linux", homeDir: "/home/internal user" },
+    );
+
+    expect(posix).toBe(
+      "cd '/repo with spaces' && CODEX_HOME='/home/internal user/.codex-internal' codex resume 'internal id'",
+    );
+    expect(powershell).toContain("try { $env:CODEX_HOME = 'C:\\Users\\Internal User\\.codex-internal'");
+    expect(powershell).toContain("codex resume 'internal id'");
+    expect(cmd).toContain('setlocal & set "CODEX_HOME=C:\\Users\\Internal User\\.codex-internal"');
+    expect(cmd).toContain('cd /d "C:\\repo & tools" && codex resume "internal id" & endlocal');
+  });
+
+  it("keeps dangerous ordinary Codex Internal values encoded in the Windows launch chain", () => {
+    const session = {
+      source: "codex-internal",
+      rawId: "id-%PATH%-!TEMP!-&|<>^\"",
+      projectPath: "C:\\repo\\%PATH%\\!TEMP! & source",
+    } as SessionSearchResult;
+    const settings = {
+      ...defaultSettings,
+      defaultTerminal: "Cmd" as const,
+      codexBinary: "C:\\Tools\\%PATH%\\!TEMP!\\codex & helper.exe",
+    };
+    const plan = buildWindowsResumeLaunchPlan(session, settings, {
+      terminal: "Cmd",
+      platform: "win32",
+      homeDir: "C:\\Users\\%PATH%\\!TEMP!",
+    });
+
+    const command = plan[0].args.at(-1) ?? "";
+    expect(command).toMatch(/^setlocal DisableDelayedExpansion & powershell\.exe -NoLogo -NoProfile -EncodedCommand [A-Za-z0-9+/=]+ & endlocal$/);
+    expect(decodeEncodedCmdPowerShell(command)).toBe(
+      "$ErrorActionPreference = 'Stop'; $env:CODEX_HOME = 'C:\\Users\\%PATH%\\!TEMP!\\.codex-internal'; & 'C:\\Tools\\%PATH%\\!TEMP!\\codex & helper.exe' resume 'id-%PATH%-!TEMP!-&|<>^\"'",
+    );
+  });
+
   it("builds Codex resume as binary args with cwd instead of shell text", () => {
     const session = {
       source: "codex-cli",
