@@ -32,3 +32,24 @@ test("creates a structured update manifest, checksum, and release notes from one
   assert.match(await readFile(path.join(outputDirectory, `${LATEST_PACKAGE_NAME}.sha256`), "utf8"), new RegExp(`^${manifest.package.sha256}`));
   assert.match(await readFile(path.join(outputDirectory, "release-notes.md"), "utf8"), /# 自动更新/);
 });
+
+test("keeps update manifest URLs compatible after the repository rename", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-session-release-rename-"));
+  const notePath = path.join(root, "note.md");
+  const packagePath = path.join(root, "agent-session-search-0.5.0.tgz");
+  const outputDirectory = path.join(root, "release");
+  await writeFile(notePath, "# 自动更新\n\n## Bug 修复\n\n- 修复更新下载地址兼容性。\n", "utf8");
+  await writeFile(packagePath, "package bytes", "utf8");
+
+  const manifest = await createReleaseAssets({
+    notePath,
+    version: "0.5.0",
+    packagePath,
+    repository: "zszz3/AgentRecall",
+    outputDirectory,
+    publishedAt: "2026-07-15T00:00:00.000Z",
+  });
+
+  assert.equal(manifest.releaseUrl, "https://github.com/zszz3/agent-session-search/releases/tag/v0.5.0");
+  assert.equal(manifest.package.url, "https://github.com/zszz3/agent-session-search/releases/download/v0.5.0/agent-session-search-0.5.0.tgz");
+});

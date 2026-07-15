@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { readReleaseNote, renderReleaseNotes } from "./release-notes.mjs";
 
 export const LATEST_PACKAGE_NAME = "agent-session-search.tgz";
+export const UPDATE_MANIFEST_REPOSITORY = "zszz3/agent-session-search";
 
 export async function createReleaseAssets({
   notePath,
@@ -23,7 +24,8 @@ export async function createReleaseAssets({
   const packageName = path.basename(packagePath);
   const sha256 = createHash("sha256").update(packageBytes).digest("hex");
   const tag = `v${version}`;
-  const releaseBaseUrl = `https://github.com/${repository}/releases`;
+  const manifestRepository = repository.toLowerCase() === "zszz3/agentrecall" ? UPDATE_MANIFEST_REPOSITORY : repository;
+  const releaseBaseUrl = `https://github.com/${manifestRepository}/releases`;
   const assetBaseUrl = `${releaseBaseUrl}/download/${tag}`;
   const checksumName = `${packageName}.sha256`;
   const latestChecksumName = `${LATEST_PACKAGE_NAME}.sha256`;

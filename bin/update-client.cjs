@@ -11,6 +11,7 @@ const { promisify } = require("node:util");
 
 const execFileAsync = promisify(execFile);
 const GITHUB_REPOSITORY = "zszz3/agent-session-search";
+const TRUSTED_GITHUB_REPOSITORIES = new Set([GITHUB_REPOSITORY.toLowerCase(), "zszz3/agentrecall"]);
 const LATEST_RELEASE_API = `https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest`;
 const LATEST_RELEASE_URL = `https://github.com/${GITHUB_REPOSITORY}/releases/latest`;
 const LATEST_PACKAGE_URL = `${LATEST_RELEASE_URL}/download/agent-session-search.tgz`;
@@ -176,7 +177,9 @@ function parseUpdateManifest(value) {
 function isTrustedReleaseUrl(value) {
   try {
     const url = new URL(value);
-    return url.protocol === "https:" && url.hostname === "github.com" && url.pathname.startsWith(`/${GITHUB_REPOSITORY}/releases/download/`);
+    const pathParts = url.pathname.split("/").filter(Boolean);
+    const repository = `${pathParts[0] || ""}/${pathParts[1] || ""}`.toLowerCase();
+    return url.protocol === "https:" && url.hostname === "github.com" && TRUSTED_GITHUB_REPOSITORIES.has(repository) && pathParts[2] === "releases" && pathParts[3] === "download";
   } catch {
     return false;
   }

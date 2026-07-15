@@ -126,6 +126,13 @@ test("rejects untrusted release package URLs", () => {
   assert.throws(() => parseUpdateManifest(value), /not trusted/);
 });
 
+test("accepts release package URLs from the renamed GitHub repository", () => {
+  const value = manifest("0.5.0");
+  value.releaseUrl = "https://github.com/zszz3/AgentRecall/releases/tag/v0.5.0";
+  value.package.url = "https://github.com/zszz3/AgentRecall/releases/download/v0.5.0/agent-session-search-0.5.0.tgz";
+  assert.equal(parseUpdateManifest(value).package.url, value.package.url);
+});
+
 test("checks GitHub latest release and formats the same notes for terminal output", async () => {
   const value = manifest();
   const requests = [];
