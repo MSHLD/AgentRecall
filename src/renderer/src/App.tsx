@@ -119,6 +119,7 @@ import { CommandDialog, DeleteSessionDialog, DeleteTagDialog } from "./component
 import { SkillsDialog } from "./components/skills-dialog";
 import { AiAssistantDialog } from "./components/ai-assistant-dialog";
 import { RemoteSessionsDialog } from "./components/remote-sessions-dialog";
+import { SupabaseSetupGuide } from "./components/supabase-setup-guide";
 import { useClampedContextMenuStyle } from "./context-menu-position";
 import {
   SOURCE_LABEL,
@@ -250,6 +251,7 @@ const EMPTY_SKILL_SYNC: SkillSyncSnapshot = {
   status: {
     kind: "unconfigured",
     setupSql: "",
+    remediation: "settings",
     message: "Configure Supabase URL and anon key in Settings to sync skills.",
   },
   remoteSkillGroups: [],
@@ -1103,9 +1105,9 @@ export function App(): ReactElement {
         else if (apiConfigOpen) setApiConfigOpen(false);
         else if (aiAssistantOpen) setAiAssistantOpen(false);
         else if (settingsOpen) setSettingsOpen(false);
+        else if (remoteDetail) closeRemoteDetail();
         else if (remoteSessionsOpen) setRemoteSessionsOpen(false);
         else if (detail) closeDetail();
-        else if (remoteDetail) setRemoteDetail(null);
         else return;
         event.preventDefault();
         return;
@@ -1353,8 +1355,11 @@ export function App(): ReactElement {
     setMessageOffset(0);
     setTraceEvents([]);
     setMessagesLoading(false);
-    setRemoteSessionsOpen(false);
     setRemoteDetail({ snapshot, query: detailQuery });
+  }
+
+  function closeRemoteDetail(): void {
+    setRemoteDetail(null);
   }
 
   async function loadMoreMessages(): Promise<void> {
@@ -1530,39 +1535,6 @@ export function App(): ReactElement {
         return t("Remote session uploaded.", "远程会话已上传。");
       },
     );
-  }
-
-  async function uploadVisibleRemoteSessions(): Promise<void> {
-    const uploadable = displayedResults.filter((session) => supportsMigrationSource(session.source));
-    if (uploadable.length === 0) {
-      setActionStatus({ kind: "error", message: t("No visible sessions can be saved to remote.", "当前没有可保存到远程的可见会话。") });
-      return;
-    }
-
-    setActionStatus({ kind: "running", message: t(`Saving ${uploadable.length} visible sessions to remote...`, `正在保存 ${uploadable.length} 个当前可见会话到远程...`) });
-    let uploaded = 0;
-    let updated = 0;
-    let skipped = 0;
-    let failed = 0;
-    for (const session of uploadable) {
-      try {
-        const result = await window.sessionSearch.uploadRemoteSession(session.sessionKey);
-        if (result.status === "uploaded") uploaded += 1;
-        else if (result.status === "updated") updated += 1;
-        else skipped += 1;
-      } catch {
-        failed += 1;
-      }
-    }
-
-    const message = t(
-      `Remote save finished: ${uploaded} uploaded, ${updated} updated, ${skipped} skipped, ${failed} failed.`,
-      `远程保存完成：${uploaded} 个已上传，${updated} 个已更新，${skipped} 个已跳过，${failed} 个失败。`,
-    );
-    setActionStatus({ kind: failed > 0 ? "error" : "success", message });
-    window.setTimeout(() => {
-      setActionStatus((current) => (current?.message === message ? null : current));
-    }, 4200);
   }
 
   async function exportMarkdown(sessionKey: string): Promise<void> {
@@ -2345,7 +2317,8 @@ export function App(): ReactElement {
           olderMessageCount={0}
           revealLabel={FILE_MANAGER_LABEL}
           showItermAction={false}
-          onClose={() => setRemoteDetail(null)}
+          backdropClassName="remote-detail-backdrop"
+          onClose={closeRemoteDetail}
           onShowMore={() => undefined}
           onRename={() => undefined}
           onAddTag={() => undefined}
@@ -2556,6 +2529,7 @@ export function App(): ReactElement {
           onFetchVersion={(remoteSkillId) => fetchSyncedSkillVersion(remoteSkillId)}
           onRefreshRemote={() => void loadSkills({ silent: true })}
           onCopySetupSql={() => void copySkillSyncSetupSql()}
+          onOpenSqlEditor={() => window.sessionSearch.openSupabaseSqlEditor("skills")}
           onCopyPath={(skillPath) =>
             void runUtilityAction(t("Copying skill path", "正在复制 Skill 路径"), () => window.sessionSearch.copySkillPath(skillPath), t("Skill path copied.", "Skill 路径已复制。"))
           }
@@ -2575,8 +2549,6 @@ export function App(): ReactElement {
             void Promise.all([load(), loadSidebarMetadata()]);
           }}
           onOpenDetail={openRemoteDetail}
-          onUploadVisible={uploadVisibleRemoteSessions}
-          visibleUploadCount={displayedResults.filter((session) => supportsMigrationSource(session.source)).length}
           onClose={() => setRemoteSessionsOpen(false)}
         />
       ) : null}
@@ -3676,21 +3648,6 @@ function SettingsDialog({
                     {l("Remote Sessions", "远程会话")}
                   </button>
                 </header>
-                <label className="settings-field settings-toggle">
-                  <div className="settings-field-text">
-                    <span className="settings-field-title">{l("Enable remote session sync", "启用远程会话同步")}</span>
-                    <span className="settings-field-sub">
-                      {l("Manual upload and restore in this version. Automatic background sync comes later.", "当前版本为手动上传和恢复；后台自动同步后续再做。")}
-                    </span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    className="switch"
-                    checked={Boolean(settings?.remoteSyncEnabled)}
-                    disabled={!settings || saving}
-                    onChange={(event) => onSettingsChange({ remoteSyncEnabled: event.currentTarget.checked })}
-                  />
-                </label>
                 <label className="settings-field remote-sync-field">
                   <div className="settings-field-text">
                     <span className="settings-field-title">Supabase URL</span>
@@ -3717,6 +3674,32 @@ function SettingsDialog({
                     disabled={!settings || saving}
                     placeholder="eyJhbGciOi..."
                     onChange={(event) => onSettingsChange({ remoteSyncSupabaseAnonKey: event.currentTarget.value })}
+                  />
+                </label>
+                <SupabaseSetupGuide
+                  language={language}
+                  tone="info"
+                  title={l("First-time setup", "首次配置")}
+                  message={l(
+                    "Copy the latest setup SQL, open this project's SQL Editor, run it once, then enable session sync.",
+                    "复制最新初始化 SQL，打开当前项目的 SQL Editor 执行一次，然后启用会话同步。",
+                  )}
+                  onCopySql={() => window.sessionSearch.copyCombinedSyncSetupSql()}
+                  onOpenSqlEditor={() => window.sessionSearch.openSupabaseSqlEditor("sessions")}
+                />
+                <label className="settings-field settings-toggle">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">{l("Enable remote session sync", "启用远程会话同步")}</span>
+                    <span className="settings-field-sub">
+                      {l("Manual upload and restore in this version. Automatic background sync comes later.", "当前版本为手动上传和恢复；后台自动同步后续再做。")}
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={Boolean(settings?.remoteSyncEnabled)}
+                    disabled={!settings || saving}
+                    onChange={(event) => onSettingsChange({ remoteSyncEnabled: event.currentTarget.checked })}
                   />
                 </label>
               </section>
@@ -3754,21 +3737,6 @@ function SettingsDialog({
                     )}
                   </p>
                 </header>
-                <label className="settings-field settings-toggle">
-                  <div className="settings-field-text">
-                    <span className="settings-field-title">{l("Enable Supabase sync", "启用 Supabase 同步")}</span>
-                    <span className="settings-field-sub">
-                      {l("Advanced automatic table creation is not used; the app will show SQL when the table is missing.", "不使用高级自动建表；缺表时应用会展示可复制的初始化 SQL。")}
-                    </span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    className="switch"
-                    checked={Boolean(settings?.skillSyncEnabled)}
-                    disabled={!settings || saving}
-                    onChange={(event) => onSettingsChange({ skillSyncEnabled: event.currentTarget.checked })}
-                  />
-                </label>
                 <label className="settings-field skills-sync-field">
                   <div className="settings-field-text">
                     <span className="settings-field-title">Supabase URL</span>
@@ -3793,6 +3761,32 @@ function SettingsDialog({
                     disabled={!settings || saving}
                     placeholder="eyJhbGciOi..."
                     onChange={(event) => onSettingsChange({ skillSyncSupabaseAnonKey: event.currentTarget.value })}
+                  />
+                </label>
+                <SupabaseSetupGuide
+                  language={language}
+                  tone="info"
+                  title={l("First-time setup", "首次配置")}
+                  message={l(
+                    "The same setup SQL initializes session and Skill sync. Run it once in this project's SQL Editor, then enable sync.",
+                    "同一份初始化 SQL 会同时准备会话和 Skill 同步，请在当前项目的 SQL Editor 中执行一次，然后启用同步。",
+                  )}
+                  onCopySql={() => window.sessionSearch.copyCombinedSyncSetupSql()}
+                  onOpenSqlEditor={() => window.sessionSearch.openSupabaseSqlEditor("skills")}
+                />
+                <label className="settings-field settings-toggle">
+                  <div className="settings-field-text">
+                    <span className="settings-field-title">{l("Enable Supabase sync", "启用 Supabase 同步")}</span>
+                    <span className="settings-field-sub">
+                      {l("Advanced automatic table creation is not used; the app will show SQL when the table is missing.", "不使用高级自动建表；缺表时应用会展示可复制的初始化 SQL。")}
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={Boolean(settings?.skillSyncEnabled)}
+                    disabled={!settings || saving}
+                    onChange={(event) => onSettingsChange({ skillSyncEnabled: event.currentTarget.checked })}
                   />
                 </label>
               </section>
@@ -3842,10 +3836,24 @@ function SettingsDialog({
                 <div className="update-app-identity">
                   <UpdateBrandMark />
                   <h3>Agent-Session-Search</h3>
-                  <p>v{appUpdateStatus?.currentVersion ?? "0.0.0"}</p>
+                  <p>
+                    {appUpdateStatus?.developmentBuild
+                      ? `${l("Development build", "开发版本")} · v${appUpdateStatus.currentVersion}`
+                      : `v${appUpdateStatus?.currentVersion ?? "0.0.0"}`}
+                  </p>
                 </div>
 
-                {shouldSignalAppUpdate && appUpdateStatus?.manifest ? (
+                {appUpdateStatus?.developmentBuild ? (
+                  <div className="update-current-state development">
+                    <span className="update-state-icon" aria-hidden="true">
+                      <Info size={19} />
+                    </span>
+                    <span className="update-state-copy">
+                      <strong>{l("Running from source", "正在从源码运行")}</strong>
+                      <span>{l("Release updates are disabled while running from source.", "从源码运行时不检查或安装正式版本更新。")}</span>
+                    </span>
+                  </div>
+                ) : shouldSignalAppUpdate && appUpdateStatus?.manifest ? (
                   <div className="update-available-card">
                     <div className="update-available-head">
                       <div className="update-available-copy">
@@ -3918,7 +3926,7 @@ function SettingsDialog({
                   </div>
                 )}
 
-                {!shouldSignalAppUpdate ? (
+                {!appUpdateStatus?.developmentBuild && !shouldSignalAppUpdate ? (
                   <div className="update-about-actions">
                     <button type="button" className="settings-action-button" disabled={appUpdateBusy} onClick={onCheckAppUpdate}>
                       <RefreshCw size={14} className={appUpdateBusy ? "spin" : ""} />
@@ -3926,19 +3934,21 @@ function SettingsDialog({
                     </button>
                   </div>
                 ) : null}
-                <label className="settings-field settings-toggle update-auto-check">
-                  <div className="settings-field-text">
-                    <span className="settings-field-title">{l("Automatically check for updates", "自动检查更新")}</span>
-                    <span className="settings-field-sub">{l("The terminal and App check for a new version once a day.", "终端与 App 每天自动检查一次新版本。")}</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    className="switch"
-                    checked={Boolean(settings?.autoCheckUpdates)}
-                    disabled={!settings || saving}
-                    onChange={(event) => onSettingsChange({ autoCheckUpdates: event.currentTarget.checked })}
-                  />
-                </label>
+                {!appUpdateStatus?.developmentBuild ? (
+                  <label className="settings-field settings-toggle update-auto-check">
+                    <div className="settings-field-text">
+                      <span className="settings-field-title">{l("Automatically check for updates", "自动检查更新")}</span>
+                      <span className="settings-field-sub">{l("The terminal and App check for a new version once a day.", "终端与 App 每天自动检查一次新版本。")}</span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      className="switch"
+                      checked={Boolean(settings?.autoCheckUpdates)}
+                      disabled={!settings || saving}
+                      onChange={(event) => onSettingsChange({ autoCheckUpdates: event.currentTarget.checked })}
+                    />
+                  </label>
+                ) : null}
               </section>
             ) : null}
           </div>

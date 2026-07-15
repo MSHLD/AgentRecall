@@ -1,15 +1,21 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 
 import * as releaseAssetModule from "./create-release-assets.mjs";
 
 const { createReleaseAssets, LATEST_PACKAGE_NAME } = releaseAssetModule;
+const temporaryDirectories = new Set();
+
+after(async () => {
+  await Promise.all([...temporaryDirectories].map((directory) => rm(directory, { recursive: true, force: true })));
+});
 
 test("creates a structured update manifest, checksum, and release notes from one source", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "agent-session-release-"));
+  temporaryDirectories.add(root);
   const notePath = path.join(root, "note.md");
   const packagePath = path.join(root, "agent-session-search-0.2.0.tgz");
   const outputDirectory = path.join(root, "release");
