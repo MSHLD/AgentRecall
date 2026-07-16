@@ -1,4 +1,4 @@
-import { forwardRef, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, forwardRef, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactElement } from "react";
 import {
   AppWindow,
@@ -3335,7 +3335,12 @@ function SettingsDialog({
                           {shortcut.keyGroups.map((keyGroup, groupIndex) => (
                             <span className="shortcut-reference-group" key={keyGroup.join("+")}>
                               <span className="shortcut-reference-combo">
-                                {keyGroup.map((key) => <kbd key={key}>{key}</kbd>)}
+                                {keyGroup.map((key, keyIndex) => (
+                                  <Fragment key={key}>
+                                    {keyIndex > 0 ? <span className="shortcut-reference-combo-separator">+</span> : null}
+                                    <kbd>{key}</kbd>
+                                  </Fragment>
+                                ))}
                               </span>
                               {groupIndex < shortcut.keyGroups.length - 1 ? (
                                 <span className="shortcut-reference-separator" aria-hidden="true">/</span>

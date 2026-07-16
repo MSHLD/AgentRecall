@@ -4724,6 +4724,11 @@ select:focus-visible {
   gap: 4px;
 }
 
+.shortcut-reference-combo-separator {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .shortcut-reference-combo kbd {
   min-width: 28px;
   padding: 4px 7px;

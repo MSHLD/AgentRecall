@@ -56,8 +56,20 @@ describe("shortcut discoverability", () => {
     expect(shortcutReference).toContain('<dl className="shortcut-reference-list">');
     expect(shortcutReference).toContain("<dt>");
     expect(shortcutReference).toContain("{shortcut.label}");
-    expect(shortcutReference).toContain("<kbd key={key}>{key}</kbd>");
+    expect(shortcutReference).toContain("<kbd>{key}</kbd>");
     expect(shortcutReference).not.toMatch(/<(?:input|select|button)\b/);
+  });
+
+  it("joins keys in the same shortcut with a visible plus sign", () => {
+    const shortcutReference = sourceBlock(
+      '<section className="shortcut-reference"',
+      "</section>",
+    );
+
+    expect(shortcutReference).toContain("{keyGroup.map((key, keyIndex) => (");
+    expect(shortcutReference).toContain(
+      '{keyIndex > 0 ? <span className="shortcut-reference-combo-separator">+</span> : null}',
+    );
   });
 
   it("maps paired match actions explicitly for assistive technology", () => {
