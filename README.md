@@ -395,6 +395,13 @@ npm run package:smoke
                     <sub><b>wlh26</b></sub>
                 </a>
             </td>
+            <td align="center">
+                <a href="https://github.com/puppyben1">
+                    <img src="https://avatars.githubusercontent.com/u/136492871?v=4" width="80;" alt="puppyben1"/>
+                    <br />
+                    <sub><b>puppyben1</b></sub>
+                </a>
+            </td>
 		</tr>
 	<tbody>
 </table>
