@@ -26,12 +26,42 @@ function packageRoot() {
   return path.resolve(__dirname, "..");
 }
 
-function currentVersion() {
+function currentVersion(options = {}) {
+  const root = options.packageRoot || packageRoot();
+  const readPackageVersion = () => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version || "0.0.0";
+    } catch {
+      return "0.0.0";
+    }
+  };
+
+  // The repo's package.json version is a placeholder; the real version lives in git tags. Prefer the
+  // tag when running from a checkout so source builds don't misreport their version. Installed npm
+  // tarballs have no `.git`, so they keep reading the CI-stamped package.json version. A worktree
+  // stores `.git` as a file, so accept any existing entry rather than requiring a directory.
+  let hasGit = false;
   try {
-    return JSON.parse(fs.readFileSync(path.join(packageRoot(), "package.json"), "utf8")).version || "0.0.0";
+    hasGit = fs.existsSync(path.join(root, ".git"));
   } catch {
-    return "0.0.0";
+    hasGit = false;
   }
+  if (!hasGit) return readPackageVersion();
+
+  try {
+    const runGit = options.execFileSyncImpl || execFileSync;
+    const described = runGit("git", ["describe", "--tags", "--abbrev=0"], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 2_000,
+    }).trim();
+    const normalized = described.replace(/^v/, "");
+    // Guard compareVersions/parseStableVersion, which throw on anything but strict x.y.z.
+    if (/^\d+\.\d+\.\d+$/.test(normalized)) return normalized;
+  } catch {
+    // git missing, shallow clone with no tags, permission error, etc. -> fall back below.
+  }
+  return readPackageVersion();
 }
 
 function stateDirectory(homeDir = os.homedir()) {
