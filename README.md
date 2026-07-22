@@ -353,17 +353,17 @@ npm run package:smoke
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/CuSO41108">
-                    <img src="https://avatars.githubusercontent.com/u/177388097?v=4" width="80;" alt="CuSO41108"/>
-                    <br />
-                    <sub><b>CuSO41108</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/MSHLD">
                     <img src="https://avatars.githubusercontent.com/u/102949095?v=4" width="80;" alt="MSHLD"/>
                     <br />
                     <sub><b>MSHLD</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/CuSO41108">
+                    <img src="https://avatars.githubusercontent.com/u/177388097?v=4" width="80;" alt="CuSO41108"/>
+                    <br />
+                    <sub><b>CuSO41108</b></sub>
                 </a>
             </td>
             <td align="center">
