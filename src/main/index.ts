@@ -73,7 +73,7 @@ import { buildCombinedSupabaseSetupSql, supabaseSqlEditorUrl } from "../core/sup
 import { buildSshArgs, readUserSshConfig } from "../core/ssh-config";
 import { AUTO_INDEX_REFRESH_INTERVAL_MS, INITIAL_INDEX_DELAY_MS } from "../core/refresh-policy";
 import { globalShortcutLabel, normalizeGlobalShortcut } from "../core/shortcuts";
-import { isLocalSessionEnvironment } from "../core/session-environment";
+import { isLocalSessionEnvironment, isLocalSessionStorage } from "../core/session-environment";
 import { OPTIONAL_SESSION_SOURCE_DESCRIPTORS } from "../core/session-sources";
 import type { AppSettings, AppSettingsUpdate } from "../core/platform";
 import { APP_UPDATE_EVENTS } from "../shared/ipc/app-update";
@@ -477,7 +477,7 @@ function hasHydratedRemoteDetails(sessionKey: string): boolean {
 
 async function ensureRemoteSessionDetailsLoaded(sessionKey: string): Promise<void> {
   const session = store.getSession(sessionKey);
-  if (!session || isLocalSessionEnvironment(session)) return;
+  if (!session || isLocalSessionStorage(session)) return;
   if (hasHydratedRemoteDetails(sessionKey)) return;
 
   const active = remoteDetailLoads.get(sessionKey);
@@ -485,7 +485,7 @@ async function ensureRemoteSessionDetailsLoaded(sessionKey: string): Promise<voi
 
   const load = (async () => {
     const latest = store.getSession(sessionKey);
-    if (!latest || isLocalSessionEnvironment(latest)) return;
+    if (!latest || isLocalSessionStorage(latest)) return;
     if (latest.source === "codewiz-cli") return;
     const environment = store.getEnvironment(latest.environmentId);
     if (!environment || environment.kind !== "ssh") throw new Error("SSH environment is not available for this remote session.");
@@ -840,6 +840,7 @@ async function runIndexSync(): Promise<IndexStatus> {
       includeTrae: settings.includeTrae,
       includeQoder: settings.includeQoder,
     },
+    onEnvironmentsChanged: emitEnvironmentsUpdated,
     onProgress: (status) => {
       indexStatus = { ...status, lastIndexedAt: indexStatus.lastIndexedAt };
       mainWindow?.webContents.send("index-status", indexStatus);
@@ -1223,7 +1224,7 @@ function registerIpc(): void {
     const pageOffset = offset ?? 0;
     const pageLimit = limit ?? 120;
     const session = store.getSession(sessionKey);
-    if (session && !isLocalSessionEnvironment(session) && !hasHydratedRemoteDetails(sessionKey)) {
+    if (session && !isLocalSessionStorage(session) && !hasHydratedRemoteDetails(sessionKey)) {
       if (session.messageCount <= 0) return [];
       const environment = requireRemoteSshEnvironment(session);
       if (!environment) return [];
@@ -1234,7 +1235,7 @@ function registerIpc(): void {
   });
   ipcMain.handle("session:trace-events", async (_event, sessionKey: string, options?: TraceEventQueryOptions) => {
     const session = store.getSession(sessionKey);
-    if (session && !isLocalSessionEnvironment(session) && !hasHydratedRemoteDetails(sessionKey)) return [];
+    if (session && !isLocalSessionStorage(session) && !hasHydratedRemoteDetails(sessionKey)) return [];
     await ensureRemoteSessionDetailsLoaded(sessionKey);
     return store.getTraceEvents(sessionKey, options);
   });

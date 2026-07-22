@@ -64,6 +64,7 @@ interface SessionRow {
   raw_id: string;
   source: SessionSource;
   environment_id: string;
+  storage_environment_id: string;
   project_path: string;
   file_path: string;
   original_title: string;
@@ -160,21 +161,24 @@ export class SessionsStore {
     const normalizedTokenEvents = tokenEvents.map(normalizeTokenEvent).filter((event) => event.totalTokens > 0 && event.dedupeKey);
     const tokenUsage = normalizedTokenEvents.length > 0 ? tokenUsageFromEvents(normalizedTokenEvents) : normalizeTokenUsage(session.tokenUsage);
     const indexedAt = Date.now();
+    const environmentId = session.environmentId ?? "local";
+    const storageEnvironmentId = session.storageEnvironmentId ?? environmentId;
     this.transaction(() => {
       this.db
         .prepare(
           `
           INSERT INTO sessions (
-            session_key, raw_id, source, environment_id, project_path, file_path, original_title, first_question,
+            session_key, raw_id, source, environment_id, storage_environment_id, project_path, file_path, original_title, first_question,
             timestamp, file_mtime_ms, file_size, pr_url, pr_number, message_count,
             input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens, total_tokens, indexed_at,
             is_subagent, parent_session_id
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(session_key) DO UPDATE SET
             raw_id = excluded.raw_id,
             source = excluded.source,
             environment_id = excluded.environment_id,
+            storage_environment_id = excluded.storage_environment_id,
             project_path = excluded.project_path,
             file_path = excluded.file_path,
             original_title = excluded.original_title,
@@ -199,7 +203,8 @@ export class SessionsStore {
           session.sessionKey,
           session.rawId,
           session.source,
-          session.environmentId ?? "local",
+          environmentId,
+          storageEnvironmentId,
           session.projectPath,
           session.filePath,
           session.originalTitle,
@@ -302,7 +307,7 @@ export class SessionsStore {
     const row = this.db
       .prepare(
         `
-        SELECT raw_id, source, environment_id, project_path, file_path, original_title, first_question,
+        SELECT raw_id, source, environment_id, storage_environment_id, project_path, file_path, original_title, first_question,
           timestamp, file_mtime_ms, file_size, pr_url, pr_number, is_subagent, parent_session_id
         FROM sessions
         WHERE session_key = ?
@@ -314,6 +319,7 @@ export class SessionsStore {
         | "raw_id"
         | "source"
         | "environment_id"
+        | "storage_environment_id"
         | "project_path"
         | "file_path"
         | "original_title"
@@ -332,6 +338,7 @@ export class SessionsStore {
       row.raw_id === session.rawId &&
       row.source === session.source &&
       row.environment_id === (session.environmentId ?? "local") &&
+      row.storage_environment_id === (session.storageEnvironmentId ?? session.environmentId ?? "local") &&
       row.project_path === session.projectPath &&
       row.file_path === session.filePath &&
       row.original_title === session.originalTitle &&
@@ -356,7 +363,7 @@ export class SessionsStore {
         `
         SELECT file_path AS filePath, file_mtime_ms AS fileMtimeMs, file_size AS fileSize, indexed_at AS indexedAt
         FROM sessions
-        WHERE environment_id = ?
+        WHERE storage_environment_id = ?
           AND file_path != ''
           AND file_mtime_ms > 0
       `,
@@ -373,20 +380,23 @@ export class SessionsStore {
     const normalizedTokenEvents = tokenEvents?.map(normalizeTokenEvent).filter((event) => event.totalTokens > 0 && event.dedupeKey);
     const tokenUsage = normalizedTokenEvents === undefined ? normalizeTokenUsage(session.tokenUsage) : tokenUsageFromEvents(normalizedTokenEvents);
     const indexedAt = Date.now();
+    const environmentId = session.environmentId ?? "local";
+    const storageEnvironmentId = session.storageEnvironmentId ?? environmentId;
     this.transaction(() => {
       this.db
         .prepare(
           `
           INSERT INTO sessions (
-            session_key, raw_id, source, environment_id, project_path, file_path, original_title, first_question,
+            session_key, raw_id, source, environment_id, storage_environment_id, project_path, file_path, original_title, first_question,
             timestamp, file_mtime_ms, file_size, pr_url, pr_number, message_count,
             input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens, total_tokens, indexed_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(session_key) DO UPDATE SET
             raw_id = excluded.raw_id,
             source = excluded.source,
             environment_id = excluded.environment_id,
+            storage_environment_id = excluded.storage_environment_id,
             project_path = excluded.project_path,
             file_path = excluded.file_path,
             original_title = excluded.original_title,
@@ -409,7 +419,8 @@ export class SessionsStore {
           session.sessionKey,
           session.rawId,
           session.source,
-          session.environmentId ?? "local",
+          environmentId,
+          storageEnvironmentId,
           session.projectPath,
           session.filePath,
           session.originalTitle,
@@ -676,7 +687,7 @@ export class SessionsStore {
 
   listSessionKeysByFilePath(environmentId: string, filePaths: ReadonlySet<string>): string[] {
     const rows = this.db
-      .prepare("SELECT session_key, file_path FROM sessions WHERE environment_id = ? AND file_path != ''")
+      .prepare("SELECT session_key, file_path FROM sessions WHERE storage_environment_id = ? AND file_path != ''")
       .all(environmentId) as Array<{ session_key: string; file_path: string }>;
     return rows.filter((row) => !filePaths.has(row.file_path)).map((row) => row.session_key);
   }
@@ -1755,6 +1766,7 @@ export class SessionsStore {
       rawId: row.raw_id,
       source: row.source,
       environmentId: environment.id,
+      storageEnvironmentId: row.storage_environment_id,
       environmentKind: environment.kind,
       environmentLabel: environment.label,
       projectPath: row.project_path,

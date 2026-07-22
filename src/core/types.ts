@@ -172,6 +172,7 @@ export interface IndexedSession {
   gitBranch?: string | null;
   tokenUsage?: TokenUsage;
   environmentId?: string;
+  storageEnvironmentId?: string;
   environmentKind?: EnvironmentKind;
   environmentLabel?: string;
   isSubagent?: boolean;
@@ -183,6 +184,11 @@ export interface LoadedSession {
   messages: SessionMessage[];
   tokenEvents?: TokenUsageEvent[];
   traceEvents?: SessionTraceEvent[];
+  executionEnvironmentHint?: {
+    kind: "ssh";
+    label: string;
+    hostAlias: string;
+  };
 }
 
 export type SessionSourceFilter = SessionSource | "claude" | "codex" | "all";
