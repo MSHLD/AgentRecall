@@ -22,6 +22,7 @@ import {
   Laptop,
   PackageSearch,
   Pin,
+  Database,
   PinOff,
   Play,
   RefreshCw,
@@ -107,6 +108,9 @@ import { DetailPanel } from "./features/session-detail/detail-panel";
 import { SessionMigrationDialog, SessionMigrationLaunchFailedDialog } from "./components/session-migration-dialog";
 import { CommandDialog, DeleteSessionDialog, DeleteTagDialog } from "./components/session-dialogs";
 import { SkillsDialog } from "./features/skills/skills-dialog";
+import { DigitalAssetsDialog } from "./features/digital-assets/digital-assets-dialog";
+import type { RulesSyncSnapshot } from "../../core/rules-sync";
+import type { MemoriesSyncSnapshot } from "../../core/memories-sync";
 import { AiAssistantDialog } from "./components/ai-assistant-dialog";
 import { RemoteSessionsDialog } from "./features/remote-sessions/remote-sessions-dialog";
 import { SupabaseSetupGuide } from "./components/supabase-setup-guide";
@@ -146,9 +150,12 @@ import {
   supportsResumeSource,
   unsupportedMigrationTitle,
   usageStatsDisplayRows,
+  usageDelta,
+  formatUsageDelta,
   migrationAgentLabel,
   migrationTargetsForSession,
 } from "./session-ui";
+import type { UsageDelta } from "./session-ui";
 
 const STATS_PERIOD_OPTIONS: Array<{ label: string; value: SessionStatsPeriod }> = [
   { label: "Today", value: "today" },
@@ -211,6 +218,7 @@ const EMPTY_STATS: SessionStats = {
     since: null,
     until: 0,
   },
+  previousTotal: null,
 };
 
 const EMPTY_QUOTAS: UsageQuotaSnapshot = {
@@ -296,7 +304,6 @@ export function App(): ReactElement {
   const [dateRange, setDateRange] = useState<DateRangeFilter>("all");
   const [sortBy, setSortBy] = useState<SessionSortBy>("smart");
   const [liveStatus, setLiveStatus] = useState<LiveStatusFilter>("all");
-  const [hoveredScopeFilter, setHoveredScopeFilter] = useState<string | null>(null);
   const [sessionLimit, setSessionLimit] = useState(INITIAL_SESSION_LIMIT);
   const [sessionTotalCount, setSessionTotalCount] = useState(0);
   const [hasMoreSessions, setHasMoreSessions] = useState(false);
@@ -341,6 +348,9 @@ export function App(): ReactElement {
   const shouldSignalAppUpdate = Boolean(appUpdateStatus?.updateAvailable && !appUpdateStatus.updateSkipped && !appUpdateStatus.promptSnoozed);
   const [sshDialogOpen, setSshDialogOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
+  const [assetsOpen, setAssetsOpen] = useState(false);
+  const [rulesSnapshot, setRulesSnapshot] = useState<RulesSyncSnapshot | null>(null);
+  const [memoriesSnapshot, setMemoriesSnapshot] = useState<MemoriesSyncSnapshot | null>(null);
   const [apiConfigOpen, setApiConfigOpen] = useState(false);
   const [aiAssistantOpen, setAiAssistantOpen] = useState(false);
   const [remoteSessionsOpen, setRemoteSessionsOpen] = useState(false);
@@ -767,6 +777,15 @@ export function App(): ReactElement {
     if (skillsOpen) void loadSkills({ refreshUsage: true, silent: true });
   }, [skillsOpen, loadSkills]);
 
+  const loadDigitalAssets = useCallback(() => {
+    void window.sessionSearch.getRulesSyncSnapshot().then(setRulesSnapshot).catch(() => setRulesSnapshot(null));
+    void window.sessionSearch.getMemoriesSyncSnapshot().then(setMemoriesSnapshot).catch(() => setMemoriesSnapshot(null));
+  }, []);
+
+  useEffect(() => {
+    if (assetsOpen) loadDigitalAssets();
+  }, [assetsOpen, loadDigitalAssets]);
+
   useEffect(() => {
     if (!settingsOpen) return;
     void window.sessionSearch.getSkillUsageHookStatus().then(setSkillHookInstalled).catch(() => setSkillHookInstalled(false));
@@ -985,6 +1004,7 @@ export function App(): ReactElement {
         else if (deleteTagName) setDeleteTagName(null);
         else if (contextMenu) setContextMenu(null);
         else if (skillsOpen) setSkillsOpen(false);
+        else if (assetsOpen) setAssetsOpen(false);
         else if (apiConfigOpen) setApiConfigOpen(false);
         else if (aiAssistantOpen) setAiAssistantOpen(false);
         else if (settingsOpen) setSettingsOpen(false);
@@ -1045,7 +1065,7 @@ export function App(): ReactElement {
   }, [selectedKey]);
 
   useEffect(() => {
-    document.body.classList.toggle("overlay-open", Boolean(detail || remoteDetail || skillsOpen || apiConfigOpen || aiAssistantOpen || settingsOpen || sshDialogOpen || remoteSessionsOpen));
+    document.body.classList.toggle("overlay-open", Boolean(detail || remoteDetail || skillsOpen || assetsOpen || apiConfigOpen || aiAssistantOpen || settingsOpen || sshDialogOpen || remoteSessionsOpen));
     return () => document.body.classList.remove("overlay-open");
   }, [detail, remoteDetail, skillsOpen, apiConfigOpen, aiAssistantOpen, settingsOpen, sshDialogOpen, remoteSessionsOpen]);
 
@@ -1088,37 +1108,6 @@ export function App(): ReactElement {
         (a.environment?.label ?? "").localeCompare(b.environment?.label ?? ""),
     );
   }, [projects, environments, projectTags]);
-  const selectedEnvironment = useMemo(
-    () => (environmentId === "all" ? null : environments.find((environment) => environment.id === environmentId) ?? null),
-    [environmentId, environments],
-  );
-  const activeScopeFilters = [
-    selectedEnvironment
-      ? {
-          key: "environment",
-          label: selectedEnvironment.label,
-          title: environmentTarget(selectedEnvironment, language),
-          onClear: clearEnvironmentScopeFilter,
-        }
-      : null,
-    selectedProject
-      ? {
-          key: "project",
-          label: selectedProjectLabel,
-          title: selectedProject.path,
-          onClear: clearProjectScopeFilter,
-        }
-      : null,
-    tag
-      ? {
-          key: "tag",
-          label: displayTagName(tag),
-          prefix: isBranchTag(tag) ? <GitBranch size={12} /> : "#",
-          title: displayTagName(tag),
-          onClear: () => setTag(undefined),
-        }
-      : null,
-  ].filter((filter): filter is NonNullable<typeof filter> => filter !== null);
   const searchPlaceholder = projectPath
     ? t(`Search within ${selectedProjectLabel || "project"}`, `在 ${selectedProjectLabel || "项目"} 中搜索`)
     : tag
@@ -1140,17 +1129,6 @@ export function App(): ReactElement {
     setProjectEnvironmentId(undefined);
     projectPathRef.current = undefined;
     projectEnvironmentIdRef.current = undefined;
-  }
-
-  function clearProjectScopeFilter(): void {
-    clearProjectFilter();
-    setTag(undefined);
-  }
-
-  function clearEnvironmentScopeFilter(): void {
-    selectEnvironment("all");
-    clearProjectFilter();
-    setTag(undefined);
   }
 
   function selectEnvironment(nextEnvironmentId: string | "all"): void {
@@ -1353,7 +1331,9 @@ export function App(): ReactElement {
         if (detail?.sessionKey === session.sessionKey) closeDetail();
         setSelectedKey((current) => (current === session.sessionKey ? null : current));
         await Promise.all([load(), loadSidebarMetadata(), loadStats()]);
-        const message = t("Session file deleted.", "会话文件已删除。");
+        const message = session.source === "zcode-cli"
+          ? t("ZCode session deleted from the local database.", "ZCode 会话已从本地数据库删除。")
+          : t("Session file deleted.", "会话文件已删除。");
         setActionStatus({ kind: "success", message });
         window.setTimeout(() => {
           setActionStatus((current) => (current?.kind === "success" && current.message === message ? null : current));
@@ -1770,12 +1750,18 @@ export function App(): ReactElement {
           {statsFeedback ? <div className={`stats-feedback ${statsFeedback.kind}`}>{statsFeedback.message}</div> : null}
           <div className="stats-metrics">
             <span>
-              <strong>{formatCompactNumber(stats.total.messageCount)}</strong>
+              <span className="stats-metric-value">
+                <strong>{formatCompactNumber(stats.total.messageCount)}</strong>
+                <UsageDeltaBadge delta={usageDelta(stats.total.messageCount, stats.previousTotal?.messageCount ?? null)} />
+              </span>
               {t("Messages", "消息")}
             </span>
             {hasTokenUsage(stats.total) ? (
               <span>
-                <strong>{formatTokenCount(stats.total.totalTokens)}</strong>
+                <span className="stats-metric-value">
+                  <strong>{formatTokenCount(stats.total.totalTokens)}</strong>
+                  <UsageDeltaBadge delta={usageDelta(stats.total.totalTokens, stats.previousTotal?.totalTokens ?? null)} />
+                </span>
                 {t("Tokens", "Token")}
               </span>
             ) : null}
@@ -1963,31 +1949,6 @@ export function App(): ReactElement {
             onSearch={setQuery}
           />
           <div className="toolbar-filters">
-            {activeScopeFilters.length ? (
-              <div className="scope-filter" data-count={activeScopeFilters.length} aria-label={t("Active search scope", "当前搜索范围")}>
-                {activeScopeFilters.map((filter) => (
-                  <button
-                    key={filter.key}
-                    className="scope-filter-chip"
-                    onClick={filter.onClear}
-                    onMouseEnter={() => setHoveredScopeFilter(filter.key)}
-                    onMouseLeave={() => setHoveredScopeFilter((current) => (current === filter.key ? null : current))}
-                    aria-describedby={hoveredScopeFilter === filter.key ? "scope-filter-tooltip" : undefined}
-                  >
-                    <span className="scope-filter-label">
-                      {filter.prefix ? <span className="scope-filter-prefix">{filter.prefix}</span> : null}
-                      <span>{filter.label}</span>
-                    </span>
-                    <span className="scope-filter-clear" aria-hidden="true">×</span>
-                    {hoveredScopeFilter === filter.key ? (
-                      <span id="scope-filter-tooltip" className="scope-filter-tooltip" role="tooltip">
-                        {filter.title}
-                      </span>
-                    ) : null}
-                  </button>
-                ))}
-              </div>
-            ) : null}
             <div className="live-filter" role="group" aria-label="Live session status">
               {LIVE_STATUS_FILTERS.map((option) => (
                 <button
@@ -2065,6 +2026,20 @@ export function App(): ReactElement {
               aria-label={t("Skills", "Skills 管理")}
             >
               <PackageSearch size={15} />
+            </button>
+            <button
+              className={`icon-button toolbar-icon-button ${assetsOpen ? "active" : ""}`}
+              onClick={() => {
+                setSettingsOpen(false);
+                setApiConfigOpen(false);
+                setRemoteSessionsOpen(false);
+                setSkillsOpen(false);
+                setAssetsOpen(true);
+              }}
+              title={t("Digital Assets", "数字资产")}
+              aria-label={t("Digital Assets", "数字资产")}
+            >
+              <Database size={15} />
             </button>
             <button
               className={`icon-button toolbar-icon-button ${remoteSessionsOpen ? "active" : ""}`}
@@ -2184,6 +2159,7 @@ export function App(): ReactElement {
           }
           onMigrate={() => beginMigrate(detail)}
           onUploadRemote={() => void uploadRemoteSession(detail)}
+          remoteUploadDisabled={detail.source === "zcode-cli"}
           onCopyResume={() =>
             void runAction(t("Copying resume command", "正在复制 Resume 命令"), () => window.sessionSearch.copyResumeCommand(detail.sessionKey), t("Resume command copied.", "Resume 命令已复制。"))
           }
@@ -2453,6 +2429,26 @@ export function App(): ReactElement {
         />
       ) : null}
 
+      {assetsOpen ? (
+        <DigitalAssetsDialog
+          rulesSnapshot={rulesSnapshot}
+          memoriesSnapshot={memoriesSnapshot}
+          language={language}
+          onClose={() => setAssetsOpen(false)}
+          onRulesUploadAll={() => window.sessionSearch.uploadAllRulesToSync()}
+          onRulesUpload={(identity) => window.sessionSearch.uploadRuleToSync(identity)}
+          onRulesDelete={(remoteId) => window.sessionSearch.deleteRemoteRule(remoteId)}
+          onRulesCopySql={() => void window.sessionSearch.copyRulesSyncSetupSql()}
+          onRulesRestore={() => window.sessionSearch.restoreGlobalRules()}
+          onMemoriesUploadAll={() => window.sessionSearch.uploadAllMemoriesToSync()}
+          onMemoriesUpload={(identity) => window.sessionSearch.uploadMemoryToSync(identity)}
+          onMemoriesDelete={(remoteId) => window.sessionSearch.deleteRemoteMemory(remoteId)}
+          onMemoriesCopySql={() => void window.sessionSearch.copyMemoriesSyncSetupSql()}
+          onOpenSkills={() => { setAssetsOpen(false); setSkillsOpen(true); }}
+          onRefresh={loadDigitalAssets}
+        />
+      ) : null}
+
       {remoteSessionsOpen ? (
         <RemoteSessionsDialog
           cache={remoteSessionsCache}
@@ -2481,6 +2477,11 @@ export function App(): ReactElement {
       ) : null}
     </main>
   );
+}
+
+function UsageDeltaBadge({ delta }: { delta: UsageDelta | null }): ReactElement | null {
+  if (!delta || delta.kind === "flat") return null;
+  return <span className={`stats-delta stats-delta-${delta.kind}`}>{formatUsageDelta(delta)}</span>;
 }
 
 function QuotaPanel({
@@ -2527,7 +2528,13 @@ function QuotaPanel({
               <QuotaProviderCard key={card.provider} card={card} language={language} />
             ))}
             {snapshot.providers.length === 0 ? (
-              <div className="quota-empty">{loading ? l("Checking usage limits...", "正在检查额度...") : l("Usage limits unavailable.", "额度不可用。")}</div>
+              <div className="quota-empty">
+                {loading
+                  ? l("Checking usage limits...", "正在检查额度...")
+                  : (snapshot.hiddenProviders?.length ?? 0) > 0
+                    ? l("Usage limits are hidden. Enable them in settings.", "额度已在设置中隐藏。")
+                    : l("Usage limits unavailable.", "额度不可用。")}
+              </div>
             ) : null}
           </div>
           {feedback ? <div className={`quota-feedback ${feedback.kind}`}>{feedback.message}</div> : null}

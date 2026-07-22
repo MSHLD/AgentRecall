@@ -630,6 +630,15 @@ describe("SessionStore", () => {
         since: todayStart.getTime(),
         until: now,
       },
+      previousTotal: {
+        sessionCount: 0,
+        messageCount: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedInputTokens: 0,
+        reasoningOutputTokens: 0,
+        totalTokens: 0,
+      },
     });
     expect(store.getStats({ period: "sevenDay" }, now).total).toEqual({
       sessionCount: 2,
@@ -676,6 +685,15 @@ describe("SessionStore", () => {
         period: "thirtyDay",
         since: now - 30 * 24 * 60 * 60 * 1000,
         until: now,
+      },
+      previousTotal: {
+        sessionCount: 1,
+        messageCount: 1,
+        inputTokens: 30,
+        outputTokens: 15,
+        cachedInputTokens: 5,
+        reasoningOutputTokens: 0,
+        totalTokens: 50,
       },
     });
     expect(store.getStats({ period: "allTime" }, now).total).toEqual({
@@ -1180,21 +1198,18 @@ describe("SessionStore", () => {
   it("does not delete shared SQLite source databases for database-backed agent sessions", () => {
     const store = createInMemoryStore();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-delete-db-session-"));
-    const filePath = path.join(dir, "state.db");
-    fs.writeFileSync(filePath, "sqlite placeholder", "utf8");
-    store.upsertIndexedSession(
-      sampleSession({
-        sessionKey: "hermes:abc",
-        rawId: "abc",
-        source: "hermes",
-        filePath,
-      }),
-      messages,
-    );
-
-    expect(() => store.deleteSession("hermes:abc")).toThrow("Cannot delete shared Hermes source database.");
-    expect(fs.existsSync(filePath)).toBe(true);
-    expect(store.getSession("hermes:abc")).not.toBeNull();
+    const sources = [
+      { sessionKey: "hermes:abc", source: "hermes", message: "Cannot delete shared Hermes source database." },
+      { sessionKey: "opencode:abc", source: "opencode-cli", message: "Cannot delete shared OpenCode source database." },
+    ] as const;
+    for (const item of sources) {
+      const filePath = path.join(dir, `${item.source}.db`);
+      fs.writeFileSync(filePath, "sqlite placeholder", "utf8");
+      store.upsertIndexedSession(sampleSession({ ...item, rawId: "abc", filePath }), messages);
+      expect(() => store.deleteSession(item.sessionKey)).toThrow(item.message);
+      expect(fs.existsSync(filePath)).toBe(true);
+      expect(store.getSession(item.sessionKey)).not.toBeNull();
+    }
 
     fs.rmSync(dir, { recursive: true, force: true });
   });
@@ -1238,11 +1253,14 @@ describe("SessionStore", () => {
     store.addTag("claude-internal:one", "internal");
     store.upsertIndexedSession(sampleSession({ sessionKey: "codebuddy:one", rawId: "codebuddy-one", source: "codebuddy-cli" }), messages);
     store.addTag("codebuddy:one", "codebuddy");
+    store.upsertIndexedSession(sampleSession({ sessionKey: "zcode:one", rawId: "zcode-one", source: "zcode-cli" }), messages);
+    store.addTag("zcode:one", "zcode");
 
-    store.deleteSessionsBySource(["claude-internal", "codebuddy-cli"]);
+    store.deleteSessionsBySource(["claude-internal", "codebuddy-cli", "zcode-cli"]);
 
     expect(store.searchSessions({ source: "claude-internal" })).toEqual([]);
     expect(store.searchSessions({ source: "codebuddy-cli" })).toEqual([]);
+    expect(store.searchSessions({ source: "zcode-cli" })).toEqual([]);
     expect(store.listTags()).toEqual([]);
   });
 

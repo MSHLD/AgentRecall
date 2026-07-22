@@ -36,6 +36,7 @@ const {
   acquireUpdateLock,
   checkForUpdate,
   compareVersions,
+  currentVersion,
   ensureElectronRuntimeForLaunch,
   ensureInstalledElectron,
   electronRuntimeLockPath,
@@ -58,6 +59,77 @@ const {
 test("allows enough time for a normal GitHub release check", () => {
   assert.equal(UPDATE_REQUEST_TIMEOUT_MS, 5_000);
 });
+
+async function versionFixture(prefix, { withGit = true, gitType = "dir", version = "0.1.0" } = {}) {
+  const directory = await temporaryDirectory(prefix);
+  await writeFile(path.join(directory, "package.json"), `${JSON.stringify({ version })}\n`, "utf8");
+  if (withGit) {
+    if (gitType === "dir") await mkdir(path.join(directory, ".git"), { recursive: true });
+    else await writeFile(path.join(directory, ".git"), "gitdir: /elsewhere/.git/worktrees/x\n", "utf8");
+  }
+  return directory;
+}
+
+test("currentVersion prefers the git tag in a checkout", async () => {
+  const directory = await versionFixture("agent-recall-version-tag-");
+  const calls = [];
+  const result = currentVersion({
+    packageRoot: directory,
+    execFileSyncImpl: (command, args) => {
+      calls.push([command, ...args]);
+      return "v0.20.2\n";
+    },
+  });
+  assert.equal(result, "0.20.2");
+  assert.deepEqual(calls, [["git", "describe", "--tags", "--abbrev=0"]]);
+});
+
+test("currentVersion falls back to package.json when there is no .git", async () => {
+  const directory = await versionFixture("agent-recall-version-nogit-", { withGit: false });
+  let gitRan = false;
+  const result = currentVersion({
+    packageRoot: directory,
+    execFileSyncImpl: () => {
+      gitRan = true;
+      throw new Error("git must not run without a .git entry");
+    },
+  });
+  assert.equal(result, "0.1.0");
+  assert.equal(gitRan, false);
+});
+
+test("currentVersion falls back to package.json when git fails", async () => {
+  const directory = await versionFixture("agent-recall-version-gitfail-");
+  const result = currentVersion({
+    packageRoot: directory,
+    execFileSyncImpl: () => {
+      throw new Error("fatal: no names found, cannot describe anything");
+    },
+  });
+  assert.equal(result, "0.1.0");
+});
+
+test("currentVersion rejects a non-semver tag and falls back", async () => {
+  const directory = await versionFixture("agent-recall-version-nonsemver-");
+  assert.equal(
+    currentVersion({ packageRoot: directory, execFileSyncImpl: () => "nightly-build\n" }),
+    "0.1.0",
+  );
+  assert.equal(
+    currentVersion({ packageRoot: directory, execFileSyncImpl: () => "v1.2\n" }),
+    "0.1.0",
+  );
+});
+
+test("currentVersion reads the tag when .git is a worktree file", async () => {
+  const directory = await versionFixture("agent-recall-version-worktree-", { gitType: "file" });
+  const result = currentVersion({
+    packageRoot: directory,
+    execFileSyncImpl: () => "v0.20.2\n",
+  });
+  assert.equal(result, "0.20.2");
+});
+
 
 function manifest(version = "0.2.0") {
   return {

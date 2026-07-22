@@ -12,10 +12,11 @@ export type SessionSource =
   | "openclaw"
   | "hermes"
   | "opencode-cli"
+  | "zcode-cli"
   | "cursor-agent"
   | "trae"
   | "qoder";
-export type SessionFormat = "claude" | "codex" | "codebuddy" | "codewiz" | "openclaw" | "hermes" | "opencode" | "cursor" | "trae" | "qoder";
+export type SessionFormat = "claude" | "codex" | "codebuddy" | "codewiz" | "openclaw" | "hermes" | "opencode" | "zcode" | "cursor" | "trae" | "qoder";
 export type SessionSortBy = "smart" | "activity" | "created";
 export type EnvironmentKind = "local" | "ssh";
 export type EnvironmentSyncState = "idle" | "syncing" | "watching" | "disconnected" | "error";
@@ -295,6 +296,9 @@ export interface SessionStats {
     since: number | null;
     until: number;
   };
+  // Totals for the immediately preceding comparable period (today→yesterday,
+  // 7d→prior 7d, 30d→prior 30d). Null for allTime, which has no comparison.
+  previousTotal: SessionStatsSummary | null;
 }
 
 export type UsageQuotaProvider = "codex" | "claude-code";
@@ -324,6 +328,7 @@ export interface UsageQuotaCard {
 export interface UsageQuotaSnapshot {
   generatedAt: string;
   providers: UsageQuotaCard[];
+  hiddenProviders?: UsageQuotaProvider[];
 }
 
 export type LiveSessionFamily = "claude" | "codex" | "tclaude" | "tcodex" | "codebuddy" | "codewiz" | "trae" | "qoder";
