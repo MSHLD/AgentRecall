@@ -3191,6 +3191,12 @@ select:focus-visible {
   background: var(--panel-hover);
 }
 
+.migration-targets button.active {
+  border-color: var(--accent-line);
+  background: var(--panel-hover);
+  color: var(--accent);
+}
+
 .migration-targets button:disabled {
   cursor: not-allowed;
   opacity: 0.55;

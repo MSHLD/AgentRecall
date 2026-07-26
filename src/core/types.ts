@@ -117,6 +117,10 @@ export interface PortableSession {
   parentSessionId?: string | null;
 }
 
+export interface SessionMigrationDestination {
+  environmentId: string;
+}
+
 export interface SessionMigrationProgress {
   sessionKey: string;
   target: MigrationTarget;

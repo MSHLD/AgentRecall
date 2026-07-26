@@ -1504,14 +1504,18 @@ export function App(): ReactElement {
     setMigrationDialog({ kind: "select", session });
   }
 
-  async function runMigration(target: SessionMigrationProgress["target"]): Promise<void> {
+  async function runMigration(target: SessionMigrationProgress["target"], destinationEnvironmentId: string): Promise<void> {
     if (!migrationDialog || migrationDialog.kind !== "select") return;
     const session = migrationDialog.session;
     setContextMenu(null);
     setMigrationProgress(null);
     setActionStatus({ kind: "running", message: t("Preparing migration...", "正在准备迁移...") });
     try {
-      const result: SessionMigrationResult = await window.sessionSearch.migrateSession(session.sessionKey, target);
+      const result: SessionMigrationResult = await window.sessionSearch.migrateSession(
+        session.sessionKey,
+        target,
+        { environmentId: destinationEnvironmentId },
+      );
       await Promise.all([load(), loadSidebarMetadata(), loadStats()]);
       await refreshLiveSessions();
       const strategyLabel = migrationStrategyLabel(result.strategy, language);
@@ -2156,11 +2160,12 @@ export function App(): ReactElement {
       {migrationDialog?.kind === "select" ? (
         <SessionMigrationDialog
           session={migrationDialog.session}
+          environments={environments}
           targets={migrationTargetsForSession(migrationDialog.session, appSettings ?? DEFAULT_MIGRATION_TARGET_SETTINGS)}
           language={language}
           busy={actionStatus?.kind === "running"}
           progress={migrationProgress}
-          onSelect={(target) => void runMigration(target)}
+          onSelect={(target, environmentId) => void runMigration(target, environmentId)}
           onClose={() => setMigrationDialog(null)}
         />
       ) : null}

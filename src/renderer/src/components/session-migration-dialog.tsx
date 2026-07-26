@@ -1,9 +1,10 @@
-import type { ReactElement } from "react";
+import { useEffect, useMemo, useState, type ReactElement } from "react";
 import { Copy, X } from "lucide-react";
 import type {
   MigrationTarget,
   SessionMigrationProgress,
   SessionMigrationResult,
+  SessionEnvironment,
   SessionSearchResult,
 } from "../../../core/types";
 import { localize, type LanguageMode } from "../language";
@@ -15,6 +16,7 @@ export function SessionMigrationDialog({
   busy,
   progress,
   targets,
+  environments,
   onSelect,
   onClose,
 }: {
@@ -23,12 +25,33 @@ export function SessionMigrationDialog({
   busy: boolean;
   progress?: SessionMigrationProgress | null;
   targets: readonly MigrationTarget[];
-  onSelect: (target: MigrationTarget) => void;
+  environments: readonly SessionEnvironment[];
+  onSelect: (target: MigrationTarget, environmentId: string) => void;
   onClose: () => void;
 }): ReactElement {
   const l = (en: string, zh: string) => localize(language, en, zh);
   const ssh = session.environmentKind === "ssh";
-  const availableTargets = ssh ? [] : targets;
+  const availableEnvironments = useMemo(
+    () => ssh
+      ? []
+      : environments.filter((environment) => {
+          if (!environment.enabled) return false;
+          if (session.environmentKind === "wsl") return environment.kind === "wsl";
+          return environment.kind === "local" || environment.kind === "wsl";
+        }),
+    [environments, session.environmentKind, ssh],
+  );
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState(
+    session.environmentKind === "wsl" ? session.environmentId : "local",
+  );
+  const selectedEnvironment = availableEnvironments.find((environment) => environment.id === selectedEnvironmentId);
+  const availableTargets = selectedEnvironment?.kind === "wsl"
+    ? targets.filter((target) => target === "claude" || target === "codex")
+    : targets;
+
+  useEffect(() => {
+    if (!selectedEnvironment && availableEnvironments.length > 0) setSelectedEnvironmentId(availableEnvironments[0].id);
+  }, [availableEnvironments, selectedEnvironment]);
 
   return (
     <div className="dialog-backdrop" onMouseDown={onClose}>
@@ -40,11 +63,29 @@ export function SessionMigrationDialog({
           </button>
         </div>
         <p className="dialog-copy">
-          {session.environmentKind === "wsl"
+          {selectedEnvironment?.kind === "wsl"
             ? l("Create a new WSL target-agent session from", "从当前会话创建新的 WSL 目标 Agent 会话：")
-            : l("Create a new local target-agent session from", "从当前会话创建新的本地目标 Agent 会话：")} <strong>{session.displayTitle}</strong>
+            : l("Create a new Windows target-agent session from", "从当前会话创建新的 Windows 目标 Agent 会话：")} <strong>{session.displayTitle}</strong>
         </p>
         {ssh ? <p className="dialog-copy danger-copy">{l("SSH session migration is not supported yet.", "暂不支持 SSH 会话迁移。")}</p> : null}
+        {!ssh ? (
+          <>
+            <p className="dialog-copy">{l("Target environment", "目标环境")}</p>
+            <div className="migration-targets">
+              {availableEnvironments.map((environment) => (
+                <button
+                  key={environment.id}
+                  type="button"
+                  className={environment.id === selectedEnvironmentId ? "active" : ""}
+                  onClick={() => setSelectedEnvironmentId(environment.id)}
+                  disabled={busy}
+                >
+                  {environment.kind === "local" ? l("Windows", "Windows") : `WSL · ${environment.label}`}
+                </button>
+              ))}
+            </div>
+          </>
+        ) : null}
         {busy ? <MigrationProgressPanel progress={progress ?? null} language={language} /> : null}
         <div className="migration-targets">
           {availableTargets.length === 0 ? (
@@ -52,7 +93,7 @@ export function SessionMigrationDialog({
           ) : availableTargets.map((target) => {
             const disabled = busy;
             return (
-              <button key={target} type="button" onClick={() => onSelect(target)} disabled={disabled}>
+              <button key={target} type="button" onClick={() => onSelect(target, selectedEnvironmentId)} disabled={disabled || !selectedEnvironment}>
                 {migrationAgentLabel(target)}
               </button>
             );

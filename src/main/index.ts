@@ -71,6 +71,7 @@ import {
 } from "../core/ai-assistant";
 import { applyMigrationLengthPolicy, createMigrationCompressor } from "../core/session-migration-compression";
 import { migrateSession, portableSessionFrom } from "../core/session-migration";
+import { projectPathForMigration } from "../core/migration-paths";
 import { runLocalSessionMigration } from "./local-session-migration";
 import { targetFilePathForRemoteEnvironment, writeMigratedSession } from "../core/session-migration-writers";
 import { assertMigrationTargetEnabled, isMigrationTarget, migrationTargetDescriptor } from "../core/migration-targets";
@@ -1153,6 +1154,12 @@ function fallbackMigrationResumeDisplayCommand(target: MigrationTarget, sessionI
   return getSafeMigrationResumeCommand(target, sessionId, projectPath, getSettings());
 }
 
+function isMigrationDestination(value: unknown): value is { environmentId: string } {
+  if (!value || typeof value !== "object") return false;
+  const environmentId = (value as { environmentId?: unknown }).environmentId;
+  return typeof environmentId === "string" && environmentId.trim().length > 0;
+}
+
 async function createLocalRemoteRestoreDependencies(
   onProgress: (progress: SessionMigrationProgress) => void,
 ): Promise<RemoteSessionRestoreDependencies> {
@@ -1956,35 +1963,46 @@ function registerIpc(): void {
     await openResumeInSpecificTerminal(session, getSettings(), "iTerm", { sshArgs });
     store.markResumed(sessionKey);
   });
-  ipcMain.handle("session:migrate", async (event, sessionKey: string, target: unknown) => {
+  ipcMain.handle("session:migrate", async (event, sessionKey: string, target: unknown, destinationInput?: unknown) => {
     const session = store.getSession(sessionKey);
     if (!session) throw new Error("Session not found.");
-    if (session.environmentKind === "wsl") {
-      if (!isMigrationTarget(target)) throw new Error(`Migration target ${String(target)} is not supported.`);
-      const settings = await providerService.hydrateSettings();
-      assertMigrationTargetEnabled(target, settings);
-      await ensureRemoteSessionDetailsLoaded(sessionKey);
-      const environment = requireWslEnvironment(session);
-      const portable = portableSessionFrom(session, store.getAllMessages(sessionKey));
-      const progress = (item: SessionMigrationProgress): void => event.sender.send("session:migration-progress", item);
-      const deps = await createSourceRemoteRestoreDependencies(environment, progress);
-      return restoreRemotePortableSession({
-        remoteId: sessionKey,
-        portable,
-        target: target as MigrationAgent,
-        localProjectPath: portable.projectPath,
-        deps,
-      });
+    const destinationEnvironmentId = isMigrationDestination(destinationInput)
+      ? destinationInput.environmentId
+      : session.environmentKind === "wsl" ? session.environmentId : "local";
+    const destination = store.getEnvironment(destinationEnvironmentId);
+    if (!destination || (destination.kind !== "local" && destination.kind !== "wsl")) {
+      throw new Error("Choose a Windows or WSL target environment.");
     }
-    const messages = store.getAllMessages(sessionKey);
-    const settings = Object.freeze(await providerService.hydrateSettings());
+    if (!destination.enabled) throw new Error("Target environment is disabled.");
+    if (session.environmentKind === "ssh") throw new Error("SSH session migration is not supported yet.");
+    if (session.environmentKind === "wsl" && destination.kind !== "wsl") {
+      throw new Error("WSL to Windows migration is not supported yet.");
+    }
+    if (!isMigrationTarget(target)) throw new Error(`Migration target ${String(target)} is not supported.`);
+    const settings = await providerService.hydrateSettings();
+    assertMigrationTargetEnabled(target, settings);
 
-    return runLocalSessionMigration({
-      source: session,
-      messages,
-      target,
-      settings,
-    }, localSessionMigrationRuntime(event));
+    if (session.environmentKind === "local" && destination.kind === "local") {
+      const messages = store.getAllMessages(sessionKey);
+      return runLocalSessionMigration({ source: session, messages, target, settings }, localSessionMigrationRuntime(event));
+    }
+
+    await ensureRemoteSessionDetailsLoaded(sessionKey);
+    const sourceKind = session.environmentKind;
+    const sourcePortable = portableSessionFrom(session, store.getAllMessages(sessionKey));
+    const targetProjectPath = projectPathForMigration(sourcePortable.projectPath, sourceKind, destination.kind);
+    const portable = { ...sourcePortable, projectPath: targetProjectPath };
+    const progress = (item: SessionMigrationProgress): void => event.sender.send("session:migration-progress", item);
+    const deps = destination.kind === "wsl"
+      ? await createSourceRemoteRestoreDependencies(destination, progress)
+      : await createLocalRemoteRestoreDependencies(progress);
+    return restoreRemotePortableSession({
+      remoteId: sessionKey,
+      portable,
+      target: target as MigrationAgent,
+      localProjectPath: targetProjectPath,
+      deps,
+    });
   });
   ipcMain.handle("command:open-app", async (_event, sessionKey: string) => {
     const session = store.getSession(sessionKey);
