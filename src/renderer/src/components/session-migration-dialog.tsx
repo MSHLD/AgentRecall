@@ -36,7 +36,7 @@ export function SessionMigrationDialog({
       ? []
       : environments.filter((environment) => {
           if (!environment.enabled) return false;
-          if (session.environmentKind === "wsl") return environment.kind === "wsl";
+          if (session.environmentKind === "wsl") return environment.kind === "local" || environment.kind === "wsl";
           return environment.kind === "local" || environment.kind === "wsl";
         }),
     [environments, session.environmentKind, ssh],

@@ -1975,9 +1975,6 @@ function registerIpc(): void {
     }
     if (!destination.enabled) throw new Error("Target environment is disabled.");
     if (session.environmentKind === "ssh") throw new Error("SSH session migration is not supported yet.");
-    if (session.environmentKind === "wsl" && destination.kind !== "wsl") {
-      throw new Error("WSL to Windows migration is not supported yet.");
-    }
     if (!isMigrationTarget(target)) throw new Error(`Migration target ${String(target)} is not supported.`);
     const settings = await providerService.hydrateSettings();
     assertMigrationTargetEnabled(target, settings);
@@ -1989,8 +1986,11 @@ function registerIpc(): void {
 
     await ensureRemoteSessionDetailsLoaded(sessionKey);
     const sourceKind = session.environmentKind;
+    const sourceEnvironment = sourceKind === "wsl" ? requireWslEnvironment(session) : null;
     const sourcePortable = portableSessionFrom(session, store.getAllMessages(sessionKey));
-    const targetProjectPath = projectPathForMigration(sourcePortable.projectPath, sourceKind, destination.kind);
+    const targetProjectPath = projectPathForMigration(sourcePortable.projectPath, sourceKind, destination.kind, {
+      sourceWslDistribution: sourceEnvironment?.wslDistribution,
+    });
     const portable = { ...sourcePortable, projectPath: targetProjectPath };
     const progress = (item: SessionMigrationProgress): void => event.sender.send("session:migration-progress", item);
     const deps = destination.kind === "wsl"

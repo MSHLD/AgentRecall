@@ -10,11 +10,17 @@ describe("projectPathForMigration", () => {
     expect(projectPathForMigration("/mnt/e/project/demo", "wsl", "local")).toBe("E:\\project\\demo");
   });
 
+  it("maps WSL home paths through the distribution UNC path", () => {
+    expect(projectPathForMigration("/home/alice/project", "wsl", "local", {
+      sourceWslDistribution: "Ubuntu",
+    })).toBe("\\\\wsl$\\Ubuntu\\home\\alice\\project");
+  });
+
   it("preserves paths between WSL distributions", () => {
     expect(projectPathForMigration("/home/alice/project", "wsl", "wsl")).toBe("/home/alice/project");
   });
 
-  it("rejects non-mounted WSL paths when targeting Windows", () => {
-    expect(() => projectPathForMigration("/home/alice/project", "wsl", "local")).toThrow("Cannot map WSL project path");
+  it("requires the source distribution for WSL-only paths", () => {
+    expect(() => projectPathForMigration("/home/alice/project", "wsl", "local")).toThrow("WSL distribution is required");
   });
 });
