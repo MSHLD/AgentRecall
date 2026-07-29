@@ -17,6 +17,14 @@ type LiveSessionSnapshotLoader = (options?: LoadLiveSessionOptions) => Promise<L
 interface ProcessEntry {
   pid: number;
   command: string;
+  parentPid?: number;
+}
+
+interface WindowsLiveSessionRecord {
+  version?: number;
+  agent?: "claude" | "codex";
+  sessionId?: string;
+  pid?: number;
 }
 
 interface ClaudeSessionCandidate {
@@ -142,10 +150,11 @@ export async function loadLiveSessionSnapshot(options: LoadLiveSessionOptions = 
         ? await runner("powershell.exe", [
             "-NoProfile",
             "-Command",
-            'Get-CimInstance Win32_Process | ForEach-Object { if ($_.CommandLine) { "{0} {1}" -f $_.ProcessId, $_.CommandLine } }',
+            'Get-CimInstance Win32_Process | ForEach-Object { if ($_.CommandLine) { "{0}`t{1}`t{2}" -f $_.ProcessId, $_.ParentProcessId, $_.CommandLine } }',
           ])
         : await runner("/bin/ps", ["-axo", "pid=,command="]);
     const lines = output.split(/\r?\n/);
+    const processEntries = lines.map(parseProcessLine).filter((entry): entry is ProcessEntry => Boolean(entry));
     const [codexSessionFilesByPid, claudeSessionFilesByPid] =
       platform === "win32"
         ? [new Map<number, string>(), new Map<number, string>()]
@@ -181,19 +190,24 @@ export async function loadLiveSessionSnapshot(options: LoadLiveSessionOptions = 
             includeCodeWiz: options.includeCodeWiz !== false,
           });
 
+    const sessions = detectLiveSessionsFromProcessLines(
+      lines,
+      codexSessionFilesByPid,
+      claudeSessionFilesByPid,
+      traeSessionIdsByPid,
+      qoderSessionIdsByPid,
+      openclawSessionFilesByPid,
+      cursorSessionFilesByPid,
+      codebuddySessionFilesByPid,
+      dbSessionIdsByPid,
+    );
+    if (platform === "win32") {
+      sessions.push(...loadWindowsHookSessions(options.homeDir ?? os.homedir(), processEntries, sessions));
+    }
+
     return {
       generatedAt,
-      sessions: detectLiveSessionsFromProcessLines(
-        lines,
-        codexSessionFilesByPid,
-        claudeSessionFilesByPid,
-        traeSessionIdsByPid,
-        qoderSessionIdsByPid,
-        openclawSessionFilesByPid,
-        cursorSessionFilesByPid,
-        codebuddySessionFilesByPid,
-        dbSessionIdsByPid,
-      ),
+      sessions,
     };
   } catch (error) {
     return {
@@ -428,7 +442,16 @@ async function loadTraeSessionIds(lines: string[], runner: ProcessListRunner): P
 }
 
 function parseProcessLine(line: string): ProcessEntry | null {
-  const match = line.trim().match(/^(\d+)\s+(.+)$/);
+  const trimmed = line.trim();
+  const structured = trimmed.match(/^(\d+)\t(\d+)\t([\s\S]+)$/);
+  if (structured) {
+    const pid = Number(structured[1]);
+    const parentPid = Number(structured[2]);
+    const command = structured[3]?.trim();
+    if (Number.isFinite(pid) && Number.isFinite(parentPid) && command) return { pid, parentPid, command };
+  }
+
+  const match = trimmed.match(/^(\d+)\s+(.+)$/);
   if (!match) return null;
 
   const pid = Number(match[1]);
@@ -436,6 +459,54 @@ function parseProcessLine(line: string): ProcessEntry | null {
   if (!Number.isFinite(pid) || !command) return null;
 
   return { pid, command };
+}
+
+function loadWindowsHookSessions(
+  homeDir: string,
+  entries: ProcessEntry[],
+  existing: LiveSession[],
+): LiveSession[] {
+  const filePath = path.join(homeDir, ".agent-recall", "windows-live-sessions.json");
+  let parsed: { version?: number; sessions?: WindowsLiveSessionRecord[] };
+  try {
+    parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as { version?: number; sessions?: WindowsLiveSessionRecord[] };
+  } catch {
+    return [];
+  }
+  if (parsed.version !== 1 || !Array.isArray(parsed.sessions)) return [];
+
+  const existingKeys = new Set(existing.map((session) => `${session.family}:${session.rawId}`));
+  const byPid = new Map(entries.map((entry) => [entry.pid, entry]));
+  const sessions: LiveSession[] = [];
+  for (const record of parsed.sessions) {
+    if ((record.agent !== "claude" && record.agent !== "codex") || typeof record.sessionId !== "string") continue;
+    const recordPid = Number(record.pid);
+    if (!Number.isInteger(recordPid) || recordPid <= 0) continue;
+    const process = findWindowsAgentProcess(recordPid, record.agent, byPid);
+    if (!process) continue;
+    const key = `${record.agent}:${record.sessionId}`;
+    if (existingKeys.has(key)) continue;
+    existingKeys.add(key);
+    sessions.push({ family: record.agent, rawId: record.sessionId, pid: process.pid });
+  }
+  return sessions;
+}
+
+function findWindowsAgentProcess(
+  pid: number,
+  agent: "claude" | "codex",
+  byPid: Map<number, ProcessEntry>,
+): ProcessEntry | null {
+  const visited = new Set<number>();
+  let current = byPid.get(pid);
+  while (current && !visited.has(current.pid)) {
+    visited.add(current.pid);
+    const family = executableFamily(splitCommandLine(current.command)[0]);
+    if (family === agent) return current;
+    if (!current.parentPid) return null;
+    current = byPid.get(current.parentPid);
+  }
+  return null;
 }
 
 function detectResumeCommand(tokens: string[]): { family: LiveSessionFamily; rawId: string } | null {

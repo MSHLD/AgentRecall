@@ -212,10 +212,20 @@ interface OpenVikingMemoryHookSetup {
   }): { status: "configured" | "error"; detail?: string };
 }
 
+interface WindowsLiveSessionHookSetup {
+  reconcileWindowsLiveSessionHooks(options: {
+    homeDir: string;
+    hookScriptPath: string;
+    nodePath: string;
+  }): { status: "configured" | "error"; detail?: string };
+}
+
 const OPENVIKING_MEMORY_HOOK_SETUP_PATH = path.join(__dirname, "../../bin/setup-openviking-memory-hooks.cjs");
 const OPENVIKING_MEMORY_HOOK_SCRIPT_PATH = path.join(__dirname, "../../bin/openviking-memory-hook.cjs");
 const OPENVIKING_OPENCODE_PLUGIN_PATH = path.join(__dirname, "../../bin/openviking-opencode-plugin.mjs");
 const OPENVIKING_RUNTIME_BUILD_SCRIPT_PATH = path.join(__dirname, "../../scripts/build-openviking-runtime.mjs");
+const WINDOWS_LIVE_SESSION_HOOK_SETUP_PATH = path.join(__dirname, "../../bin/setup-windows-live-session-hooks.cjs");
+const WINDOWS_LIVE_SESSION_HOOK_SCRIPT_PATH = path.join(__dirname, "../../bin/windows-live-session-hook.cjs");
 
 const DEVELOPMENT_PYTHON_RUNTIMES: Readonly<Record<string, { url: string; sha256: string }>> = {
   "darwin-arm64": {
@@ -245,6 +255,10 @@ interface DevelopmentRuntimeArtifactRecord {
 let developmentOpenVikingRuntimeBuild: Promise<OpenVikingRuntimeManifest | null> | null = null;
 function loadOpenVikingMemoryHookSetup(): OpenVikingMemoryHookSetup {
   return requireCjs(OPENVIKING_MEMORY_HOOK_SETUP_PATH) as OpenVikingMemoryHookSetup;
+}
+
+function loadWindowsLiveSessionHookSetup(): WindowsLiveSessionHookSetup {
+  return requireCjs(WINDOWS_LIVE_SESSION_HOOK_SETUP_PATH) as WindowsLiveSessionHookSetup;
 }
 
 const MCP_SETUP_PATH = path.join(__dirname, "../../bin/setup-mcp.cjs");
@@ -946,10 +960,26 @@ function reconcileOpenVikingMemoryHooks(settings: AppSettings): void {
     hookScriptPath: OPENVIKING_MEMORY_HOOK_SCRIPT_PATH,
     openCodePluginPath: OPENVIKING_OPENCODE_PLUGIN_PATH,
     manifestPath: openVikingHookManifestService.manifestPath(),
-    nodePath: process.env.npm_node_execpath || "node",
+    nodePath: process.env.AGENT_RECALL_NODE_PATH || process.env.npm_node_execpath || "node",
     integrations: openVikingIntegrations(settings),
   });
   if (result.status === "error") throw new Error(result.detail || "Could not configure OpenViking memory hooks.");
+}
+
+function reconcileWindowsLiveSessionHooks(): void {
+  if (process.platform !== "win32") return;
+  try {
+    const result = loadWindowsLiveSessionHookSetup().reconcileWindowsLiveSessionHooks({
+      homeDir: app.getPath("home"),
+      hookScriptPath: WINDOWS_LIVE_SESSION_HOOK_SCRIPT_PATH,
+      nodePath: process.env.AGENT_RECALL_NODE_PATH || process.env.npm_node_execpath || "node",
+    });
+    if (result.status === "error") {
+      console.warn(`Failed to configure Windows live session hooks: ${result.detail || "unknown error"}`);
+    }
+  } catch (error) {
+    console.warn(`Failed to configure Windows live session hooks: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 async function startConfiguredOpenVikingRuntime(settings: AppSettings): Promise<void> {
@@ -2366,6 +2396,7 @@ app.whenReady().then(async () => {
   );
   quotaService = createQuotaService();
   initializeOpenVikingMemory();
+  reconcileWindowsLiveSessionHooks();
   try {
     await refreshOpenVikingHookManifest();
     reconcileOpenVikingMemoryHooks(getSettings());

@@ -104,6 +104,60 @@ describe("live session detection", () => {
     ]);
   });
 
+  it("maps Windows plain Agent processes through the local hook registry and parent process chain", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-windows-live-"));
+    const home = path.join(root, "home");
+    const registryDir = path.join(home, ".agent-recall");
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(path.join(registryDir, "windows-live-sessions.json"), JSON.stringify({
+      version: 1,
+      sessions: [
+        { version: 1, agent: "claude", sessionId: "claude-hook-session", pid: 701 },
+        { version: 1, agent: "codex", sessionId: "codex-hook-session", pid: 801 },
+        { version: 1, agent: "claude", sessionId: "stale-session", pid: 999 },
+      ],
+    }));
+
+    const snapshot = await loadLiveSessionSnapshot({
+      platform: "win32",
+      homeDir: home,
+      runner: async () => [
+        "500\t400\tclaude.exe",
+        "600\t400\tcodex.exe app-server",
+        "701\t500\tnode C:/AgentRecall/bin/windows-live-session-hook.cjs",
+        "801\t600\tcmd.exe /d /c node hook.cjs",
+      ].join("\n"),
+    });
+
+    expect(snapshot.sessions).toEqual([
+      { family: "claude", rawId: "claude-hook-session", pid: 500 },
+      { family: "codex", rawId: "codex-hook-session", pid: 600 },
+    ]);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("does not trust a Windows hook record when its Agent process is gone or mismatched", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-windows-live-invalid-"));
+    const home = path.join(root, "home");
+    fs.mkdirSync(path.join(home, ".agent-recall"), { recursive: true });
+    fs.writeFileSync(path.join(home, ".agent-recall", "windows-live-sessions.json"), JSON.stringify({
+      version: 1,
+      sessions: [
+        { version: 1, agent: "claude", sessionId: "missing", pid: 701 },
+        { version: 1, agent: "codex", sessionId: "wrong-family", pid: 500 },
+      ],
+    }));
+
+    const snapshot = await loadLiveSessionSnapshot({
+      platform: "win32",
+      homeDir: home,
+      runner: async () => "500\t400\tclaude.exe",
+    });
+
+    expect(snapshot.sessions).toEqual([]);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
   it("infers a plain running Claude session from its cwd when lsof does not expose the session file", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "session-search-claude-live-"));
     const home = path.join(root, "home");

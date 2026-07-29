@@ -8,6 +8,7 @@ const { uninstallClaudeStatuslineBridge } = require("./install-claude-statusline
 const { uninstallSkillUsageHook } = require("./setup-skill-usage-hook.cjs");
 const { uninstallSessionSyncHooks } = require("./setup-session-sync-hook.cjs");
 const { reconcileOpenVikingMemoryHooks } = require("./setup-openviking-memory-hooks.cjs");
+const { uninstallWindowsLiveSessionHooks } = require("./setup-windows-live-session-hooks.cjs");
 const { acquireUpdateLock, stopRunningApp, waitForUpdateCompletion } = require("./update-client.cjs");
 const mcp = require("./setup-mcp.cjs");
 
@@ -41,6 +42,10 @@ async function uninstall(options = {}) {
     if (openVikingHooks.status === "error") errors.push(`OpenViking memory hooks: ${openVikingHooks.detail}`);
     else messages.push("Removed the AgentRecall OpenViking memory hooks.");
 
+    const windowsLiveHooks = uninstallWindowsLiveSessionHooks({ homeDir });
+    if (windowsLiveHooks.status === "error") errors.push(`Windows live session hooks: ${windowsLiveHooks.detail}`);
+    else messages.push(windowsLiveHooks.status === "removed" ? "Removed the AgentRecall Windows live session hooks." : "Windows live session hooks did not need changes.");
+
     try {
       messages.push(...mcp.run(true, { homeDir }));
     } catch (error) {
@@ -52,6 +57,7 @@ async function uninstall(options = {}) {
       path.join(homeDir, ".agent-recall", "update-install-status.json"),
       path.join(homeDir, ".agent-recall", "app-process.json"),
       path.join(homeDir, ".claude", "skill-usage.jsonl"),
+      path.join(homeDir, ".agent-recall", "windows-live-sessions.json"),
     ];
     for (const filePath of cacheFiles) {
       try { fs.rmSync(filePath, { force: true }); } catch (error) { errors.push(`Cache ${filePath}: ${error instanceof Error ? error.message : String(error)}`); }
