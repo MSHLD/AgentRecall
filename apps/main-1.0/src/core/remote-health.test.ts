@@ -50,6 +50,7 @@ describe("remote health checks", () => {
     const report = await diagnoseRemoteEnvironment(wslEnvironment, {
       runSsh: async (_environment, command) => {
         expect(command).toMatch(/^bash -lc /);
+        expect(command).toContain('if [ -s "$HOME/.nvm/nvm.sh" ]');
         return JSON.stringify({
           user: "me",
           codexCli: "/bin/codex",

@@ -1925,6 +1925,13 @@ function ensureRemoteWatchManager(): RemoteWatchManager {
           .then(emitEnvironmentsUpdated)
           .catch(() => undefined);
       },
+      onModeChange: (environment, mode) => {
+        if (environment.kind !== "wsl") return;
+        void store.updateEnvironmentSyncState(environment.id, mode === "polling" ? "polling" : "watching", { lastError: null })
+          .then(() => store.listEnvironments())
+          .then(emitEnvironmentsUpdated)
+          .catch(() => undefined);
+      },
     });
   }
   return remoteWatchManager;
@@ -3008,6 +3015,50 @@ function registerIpc(): void {
     }
     const migrationSource = await loadLocalSessionMigrationSource(store, request);
     const settings = Object.freeze(await providerService.hydrateSettings());
+    const targetEnvironment = request.targetEnvironmentId
+      ? await store.getEnvironment(request.targetEnvironmentId)
+      : null;
+    if (request.targetEnvironmentId && !targetEnvironment) {
+      throw new Error("Migration target environment is not configured.");
+    }
+    if (targetEnvironment && targetEnvironment.kind !== "local" && !targetEnvironment.enabled) {
+      throw new Error(`Migration target environment ${targetEnvironment.label} is disabled.`);
+    }
+    const sourceEnvironmentId = migrationSource.source.environmentId;
+    const crossEnvironment = targetEnvironment !== null && targetEnvironment.id !== sourceEnvironmentId;
+    if (crossEnvironment) {
+      assertMigrationTargetEnabled(request.target, settings);
+      if (migrationSource.source.environmentKind === "ssh"
+        && request.target !== sshMigrationTarget(migrationSource.source.source)) {
+        throw new Error("SSH sessions can only migrate between Claude Code and Codex on the same host.");
+      }
+      if (migrationSource.source.environmentKind === "wsl"
+        && !["claude", "codex", "codebuddy", "codewiz", "cursor"].includes(request.target)) {
+        throw new Error(`Migration target ${request.target} is not supported in WSL.`);
+      }
+      const portable = portableSessionFrom(
+        migrationSource.source,
+        migrationSource.messages,
+        {
+          turnSourceMessageIndexes: migrationSource.turnSourceMessageIndexes,
+          allowSsh: migrationSource.source.environmentKind === "ssh",
+        },
+      );
+      if (migrationSource.subagents.length > 0) portable.subagents = migrationSource.subagents;
+      const progress = (item: SessionMigrationProgress): void => event.sender.send("session:migration-progress", item);
+      const deps = targetEnvironment!.kind === "local"
+        ? await createLocalRemoteRestoreDependencies(progress)
+        : await createSourceRemoteRestoreDependencies(targetEnvironment!, progress);
+      return restoreRemotePortableSession({
+        remoteId: request.sessionKey,
+        portable,
+        target: request.target as MigrationAgent,
+        // A project path from another environment is not portable. Callers can
+        // provide an explicit destination path; otherwise start without one.
+        localProjectPath: request.targetProjectPath ?? "",
+        deps,
+      });
+    }
     if (migrationSource.source.environmentKind === "wsl" || migrationSource.source.environmentKind === "ssh") {
       assertMigrationTargetEnabled(request.target, settings);
       if (migrationSource.source.environmentKind === "ssh"

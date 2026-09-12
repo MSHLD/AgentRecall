@@ -27,6 +27,11 @@ interface FailedSessionVersion {
   fileSize: number;
 }
 
+function isRetryableWslIndexError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /(?:EPIPE|ECONNRESET|ETIMEDOUT|WSL .*not running|distribution .*not running|temporarily unavailable|connection.*closed|timed out)/iu.test(message);
+}
+
 const DEFAULT_CONCURRENCY = 2;
 
 export class WslSessionIndexer {
@@ -107,7 +112,13 @@ export class WslSessionIndexer {
           this.failedVersions.delete(session.sessionKey);
           indexed += 1;
         } catch (error) {
-          this.failedVersions.set(session.sessionKey, { fileMtimeMs: session.fileMtimeMs, fileSize: session.fileSize });
+          if (!isRetryableWslIndexError(error) || stage === "parse") {
+            this.failedVersions.set(session.sessionKey, { fileMtimeMs: session.fileMtimeMs, fileSize: session.fileSize });
+          } else {
+            // Transport and WSL lifecycle failures are transient. Leave this
+            // version eligible for the next watcher/polling pass.
+            this.failedVersions.delete(session.sessionKey);
+          }
           failed += 1;
           this.onSessionError(session, new Error(`WSL ${stage} failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }));
         }

@@ -962,7 +962,7 @@ describe("resume process specs", () => {
 
     expect(getResumeProcessSpec(session, defaultSettings, { platform: "win32", wslDistribution: "Ubuntu" })).toMatchObject({
       command: "wsl.exe",
-      args: ["--distribution", "Ubuntu", "--exec", "bash", "-lc", "cd /home/me/project && claude --resume claude-1"],
+      args: ["--distribution", "Ubuntu", "--exec", "bash", "-lc", "if [ -s \"$HOME/.nvm/nvm.sh\" ]; then . \"$HOME/.nvm/nvm.sh\"; fi; cd /home/me/project && claude --resume claude-1"],
       cwd: undefined,
     });
   });

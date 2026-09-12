@@ -259,7 +259,6 @@ export class RemoteSessionService {
     if (!sourceDescriptor.capabilities.sessionSync) {
       throw new Error(`${sourceDescriptor.label} sessions cannot be saved remotely yet.`);
     }
-    if (initialSession.environmentKind === "wsl") throw new Error("WSL sessions cannot be saved to cloud yet.");
     const client = this.createClient();
     const session = await this.prepareSessionForUpload(store, initialSession);
     const descendants = descendantSessions(
@@ -364,8 +363,7 @@ export class RemoteSessionService {
     const bindings = await store.listSessionSyncBindings();
     const indexedSessions = (await store.searchSessions({ limit: 100_000, excludeSubagents: false }))
       .filter((session) =>
-        session.environmentKind !== "wsl"
-        && remoteSessionAgentForSource(session.source) !== null);
+        remoteSessionAgentForSource(session.source) !== null);
     const indexedBySessionKey = new Map(indexedSessions.map((session) => [session.sessionKey, session]));
     const remotes = remoteCandidates
       .filter((remote) => indexedBySessionKey.get(remote.sourceSessionKey)?.isSubagent !== true);
@@ -449,12 +447,12 @@ export class RemoteSessionService {
   ): Promise<SessionMigrationResult> {
     const client = this.createClient();
     const remote = await client.getRemoteSession(remoteId);
-    if (remote.sourceEnvironmentKind !== "ssh") {
-      throw new Error("This remote session was not saved from an SSH environment.");
+    if (remote.sourceEnvironmentKind !== "ssh" && remote.sourceEnvironmentKind !== "wsl") {
+      throw new Error("This remote session was not saved from an SSH or WSL environment.");
     }
     const environment = await this.dependencies.getStore().getEnvironment(remote.sourceEnvironmentId);
-    if (!environment || environment.kind !== "ssh") {
-      throw new Error("The SSH environment for this remote session is not configured on this machine.");
+    if (!environment || environment.kind !== remote.sourceEnvironmentKind) {
+      throw new Error("The source environment for this remote session is not configured on this machine.");
     }
     const portable = await client.getPortableSession(remoteId);
     const deps = await this.dependencies.createSourceRestoreDependencies(environment, onProgress);

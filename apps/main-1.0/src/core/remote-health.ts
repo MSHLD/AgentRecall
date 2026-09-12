@@ -237,7 +237,8 @@ function buildPythonBase64Command(script: string): string {
   const compressed = zlib.deflateRawSync(Buffer.from(script, "utf-8"));
   const encoded = compressed.toString("base64");
   const pythonCommand = `python3 -c 'import base64,zlib; exec(zlib.decompress(base64.b64decode("${encoded}"), -15).decode("utf-8"))'`;
-  return `bash -lc ${posixShellQuote(pythonCommand)}`;
+  const shellCommand = `if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; ${pythonCommand}`;
+  return `bash -lc ${posixShellQuote(shellCommand)}`;
 }
 
 function posixShellQuote(value: string): string {

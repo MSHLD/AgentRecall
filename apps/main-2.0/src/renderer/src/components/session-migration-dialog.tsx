@@ -4,11 +4,13 @@ import type {
   MigrationTarget,
   SessionMigrationProgress,
   SessionMigrationResult,
+  SessionEnvironment,
   SessionSearchResult,
 } from "../../../core/types";
 import { isLocalSessionEnvironment } from "../../../core/session-environment";
 import { localize, type LanguageMode } from "../language";
 import { migrationAgentLabel } from "../session-ui";
+import { environmentTarget } from "../features/environments/environment-display";
 
 export function SessionMigrationDialog({
   session,
@@ -16,6 +18,7 @@ export function SessionMigrationDialog({
   busy,
   progress,
   targets,
+  environments,
   throughTurnIndex,
   onSelect,
   onClose,
@@ -25,13 +28,19 @@ export function SessionMigrationDialog({
   busy: boolean;
   progress?: SessionMigrationProgress | null;
   targets: readonly MigrationTarget[];
+  environments: readonly SessionEnvironment[];
   throughTurnIndex?: number;
-  onSelect: (target: MigrationTarget, withoutProjectPath: boolean) => void;
+  onSelect: (target: MigrationTarget, withoutProjectPath: boolean, targetEnvironmentId: string) => void;
   onClose: () => void;
 }): ReactElement {
   const l = (en: string, zh: string) => localize(language, en, zh);
   const ssh = session.environmentKind === "ssh";
+  const [targetEnvironmentId, setTargetEnvironmentId] = useState(() => session.environmentId);
   const [withoutProjectPath, setWithoutProjectPath] = useState(() => !session.projectPath.trim());
+  const targetEnvironment = environments.find((environment) => environment.id === targetEnvironmentId)
+    ?? environments.find((environment) => environment.id === session.environmentId);
+  const destinationIsLocal = targetEnvironment?.kind === "local";
+  const crossEnvironment = targetEnvironmentId !== session.environmentId;
 
   return (
     <div className="dialog-backdrop" onMouseDown={onClose}>
@@ -49,7 +58,29 @@ export function SessionMigrationDialog({
             ? l("Create a new WSL target-agent session from", "从当前会话创建新的 WSL 目标 Agent 会话：")
             : l("Create a new local target-agent session from", "从当前会话创建新的本地目标 Agent 会话：")} <strong>{session.displayTitle}</strong>
         </p>
-        {isLocalSessionEnvironment(session) ? (
+        <label className="migration-project-option">
+          <span className="migration-project-copy">
+            <strong>{l("Destination environment", "目标环境")}</strong>
+            <small>{targetEnvironment ? environmentTarget(targetEnvironment, language) : l("This computer", "这台电脑")}</small>
+          </span>
+          <select
+            value={targetEnvironmentId}
+            disabled={busy}
+            onChange={(event) => {
+              const next = event.target.value;
+              setTargetEnvironmentId(next);
+              if (next !== session.environmentId) setWithoutProjectPath(true);
+            }}
+            aria-label={l("Destination environment", "目标环境")}
+          >
+            {environments.map((environment) => (
+              <option key={environment.id} value={environment.id} disabled={environment.kind !== "local" && !environment.enabled}>
+                {environment.label} · {environmentTarget(environment, language)}
+              </option>
+            ))}
+          </select>
+        </label>
+        {(isLocalSessionEnvironment(session) || destinationIsLocal) ? (
           <button
             type="button"
             className="migration-project-option"
@@ -61,7 +92,9 @@ export function SessionMigrationDialog({
             <span className="migration-project-copy">
               <strong>{l("Create without a project path", "创建为无项目路径会话")}</strong>
               <small>
-                {session.projectPath.trim()
+                {crossEnvironment
+                  ? l("The source project path is not portable; start without one or choose a local directory.", "源环境的项目路径无法直接复用；可无项目路径启动，或选择本地目录。")
+                  : session.projectPath.trim()
                   ? l(
                       "The new session will not be associated with the current project directory.",
                       "新会话不会关联当前项目目录。",
@@ -90,7 +123,7 @@ export function SessionMigrationDialog({
           ) : targets.map((target) => {
             const disabled = busy;
             return (
-              <button key={target} type="button" onClick={() => onSelect(target, withoutProjectPath)} disabled={disabled}>
+              <button key={target} type="button" onClick={() => onSelect(target, withoutProjectPath, targetEnvironmentId)} disabled={disabled}>
                 {migrationAgentLabel(target)}
               </button>
             );

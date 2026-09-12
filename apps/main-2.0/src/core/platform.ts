@@ -618,7 +618,7 @@ export function getResumeCommand(
   const shell = localShellKind(platform, settings);
   if (wslDistribution) {
     const spec = buildResumeRuntimeProcessSpec(session, settings, skipPermissions);
-    const innerCommand = buildMigrationResumeShellCommand(spec, session.projectPath ?? "", "posix", withCwd);
+    const innerCommand = withWslShellProfile(buildMigrationResumeShellCommand(spec, session.projectPath ?? "", "posix", withCwd));
     return shell === "powershell"
       ? formatPowershellWslDisplay(wslDistribution, innerCommand)
       : formatWslDisplayCommand(wslDistribution, innerCommand, platform);
@@ -836,7 +836,7 @@ export function getResumeProcessSpec(
   const wslDistribution = resolveWslDistribution(opts);
   if (wslDistribution) {
     const spec = buildResumeRuntimeProcessSpec(session, settings, skipPermissions);
-    const innerCommand = buildMigrationResumeShellCommand(spec, session.projectPath ?? "", "posix", true);
+    const innerCommand = withWslShellProfile(buildMigrationResumeShellCommand(spec, session.projectPath ?? "", "posix", true));
     return {
       command: "wsl.exe",
       args: ["--distribution", wslDistribution, "--exec", "bash", "-lc", innerCommand],
@@ -1386,18 +1386,22 @@ function getResumePowerShellCommand(
   return formatPowershellSshDisplay(opts.sshArgs, remoteInteractiveCommand(opts.sshArgs, innerCommand));
 }
 
+function withWslShellProfile(command: string): string {
+  return `if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; ${command}`;
+}
+
 function getResumeWslPowerShellCommand(
   session: SessionSearchResult,
   settings: AppSettings,
   opts: ResumeOpenOptions & { wslDistribution: string },
 ): string {
-  const innerCommand = buildResumeShellCommand(session, settings, {
+  const innerCommand = withWslShellProfile(buildResumeShellCommand(session, settings, {
     withCwd: true,
     skipPermissions: opts.skipPermissions ?? false,
     shell: "posix",
     platform: "linux",
     homeDir: opts.homeDir,
-  });
+  }));
   return formatPowershellWslDisplay(opts.wslDistribution, innerCommand);
 }
 
